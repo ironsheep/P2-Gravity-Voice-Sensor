@@ -216,3 +216,11 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# mac stuff and my conventions
+REF/
+.DS_Store
+docker-compose.override.yml
+.history/
+*.zip
+*.gz
