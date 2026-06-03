@@ -11,15 +11,16 @@ host as a numeric **command ID**. It has dual microphones for
 noise rejection, an on-board speaker (plus an external-speaker header) for spoken replies,
 and talks to a host over either **I2C** or **UART**.
 
-This repository is a **port** of DFRobot's reference Arduino/C++ and Python library to the
-P2. The aim is an idiomatic Spin2 object that a P2 application can drop in to listen for
-spoken commands and react to them.
+This repository is a **port** of DFRobot's
+[reference Arduino/C++ and Python library](https://github.com/DFRobot/DFRobot_DF2301Q) to
+the P2. The aim is an idiomatic Spin2 object that a P2 application can drop in to listen
+for spoken commands and react to them.
 
 ## Status
 
 **Early / greenfield.** No driver source exists yet — `src/` is empty and the work is
-in progress. The DFRobot reference implementation lives under `REF/` and serves as the
-protocol specification we are porting. This README describes the intended driver.
+in progress. DFRobot's upstream library is the protocol specification we are porting from;
+this README describes the intended driver.
 
 ## What the driver will do
 
@@ -49,10 +50,9 @@ Both are 3.3 V / 5 V tolerant via the standard Gravity interface.
 
 Each recognizable phrase maps to a fixed numeric ID. The module includes **150 built-in
 command words** (movement, display, media, lighting, climate, and more) plus a **wake
-word**, and reserves slots for **custom commands**. The full ID table from the
-reference is captured in `REF/DFRobot_DF2301Q-master/python/circuitpython/DFRobot_DF2301Q_Commands.py`
-and will be ported to Spin2 `CON` symbols so application code can reference commands by
-name instead of magic numbers.
+word**, and reserves slots for **custom commands**. The full command-word ID table
+(published in DFRobot's library) will be ported to Spin2 `CON` symbols so application
+code can reference commands by name instead of magic numbers.
 
 A few IDs are special and relevant to training (below): `1` = wake-words-for-learning,
 `46` = learn once, `47` = forget, `48`/`49` = load/save model, and `200`–`208` =
@@ -72,9 +72,8 @@ IDs and trigger playback, it can already drive a guided training session.
 
 Because training is interactive, a small helper that *walks a person through* recording a
 new word would be genuinely useful. We are **not committing** to building these — they are
-noted as plausible follow-ons, and the reference repo already contains working examples
-(the Arduino `examples/` sketches and the CircuitPython / Raspberry Pi / UNIHIKER Python
-ports under `REF/`) that show the interaction in full:
+noted as plausible follow-ons (DFRobot's upstream library has Arduino and Python examples
+that show the host-side interaction in full):
 
 - **A P2-native "word trainer"** — a Spin2 program that sequences the learning commands,
   plays the module's prompts, and confirms each recognized ID on a terminal or display,
@@ -91,8 +90,7 @@ working on hardware.
 | Path | Contents |
 |---|---|
 | `src/` | P2 Spin2/PASM2 driver (to be written) |
-| `REF/DFRobot_DF2301Q-master/` | DFRobot reference library — the protocol spec being ported (Arduino C++, plus Python ports and examples) |
-| `DOCs/` | Project documentation (to be written) |
+| `DOCs/` | Project documentation, including `DOCs/policy/SPIN2-AUTHORING-GUIDE.md` (Spin2 coding standards) |
 | `.devcontainer/` | Dev container; installs the `pnut-ts` P2 compiler |
 
 ## Building
@@ -108,9 +106,10 @@ object with `pnut-ts <file.spin2>`; see `pnut-ts --help` for options.
 
 ## License
 
-See [LICENSE](LICENSE). The reference material under `REF/` is DFRobot's, distributed
-under the MIT License.
+See [LICENSE](LICENSE). DFRobot's upstream library, which this driver is ported from, is
+distributed by DFRobot under the MIT License.
 
 ## Credits
 
-Reference library by DFRobot (`qsjhyy`, 2022): https://github.com/DFRobot/DFRobot_DF2301Q
+Ported from DFRobot's library (`qsjhyy`, 2022):
+https://github.com/DFRobot/DFRobot_DF2301Q
