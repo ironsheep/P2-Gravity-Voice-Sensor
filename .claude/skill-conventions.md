@@ -4,12 +4,12 @@ Slot values for the central skill set. See
 `~/.claude/skills-docs/SKILLS-MAINT.md` for the full schema. Optional
 slots whose defaults fit this project are omitted.
 
-> **Greenfield note:** no `.spin2` source exists yet. `SPIN2_TOP_FILE`,
-> the driver filename, and the `BUILD_*`/`TEST_*` commands reference
-> *proposed* names (`src/isp_voice_recognizer.spin2` driver +
-> `src/demo_voice_recognizer.spin2` top). Update them when the real files
-> are created. Naming: `isp_` = drivers we ship, `demo_` = demos, `test_`
-> = test harnesses (parallel role prefixes, not stacked).
+> **Source status:** build 0.1.0 implemented. `src/isp_voice_recognizer.spin2` (driver),
+> `src/demo_voice_recognizer.spin2` (top/demo), and `src/isp_i2c_singleton.spin2` (bus) all
+> exist and compile clean under `pnut-ts -d`; the `BUILD_*`/`SPIN2_TOP_FILE`/`BUILD_VERSION_*`
+> slots below resolve to real files. Not yet built: `src/test_voice_recognizer.spin2`.
+> Naming: `isp_` = drivers we ship, `demo_` = demos, `test_` = test harnesses (parallel role
+> prefixes, not stacked).
 
 ---
 

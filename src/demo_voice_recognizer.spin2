@@ -1,0 +1,137 @@
+{Spin2_v46}
+'' =================================================================================================
+''
+''   File....... demo_voice_recognizer.spin2
+''   Purpose.... Demo / top object for the isp_voice_recognizer driver (DFRobot DF2301Q, I2C).
+''               Presents a runtime menu in a DEBUG TERM window (keys read with PC_KEY) that lets you
+''               exercise the driver's three usage profiles: simple-synchronous, passive scanner-poll,
+''               and the self-poller cog.
+''   Author..... Stephen M Moraco
+''               Copyright (c) 2026 Iron Sheep Productions, LLC
+''   E-mail..... stephen@ironsheep.biz
+''   Started.... 03 Jun 2026
+''
+'' =================================================================================================
+
+
+CON
+
+  _clkfreq = 200_000_000                                       ' system clock (20 MHz xtal x PLL)
+
+  ' ---- wiring: EDIT these for your board -----------------------------------------------------------
+  SCL_PIN  = 16                                                ' DF2301Q I2C clock pin
+  SDA_PIN  = 17                                                ' DF2301Q I2C data pin
+  BUS_KHZ  = 100                                               ' 100 (standard) / 400 / 1000
+  LED_PIN  = 56                                                ' an LED to show foreground responsiveness
+
+
+OBJ
+
+  voice : "isp_voice_recognizer"                               ' the driver under demonstration
+  i2c   : "isp_i2c_singleton"                                  ' referenced only for the PU_* constants
+
+
+VAR
+
+  long  key                                                    ' last keypress from the DEBUG window
+
+
+PUB main()
+
+'' Initialize the sensor, then run the interactive profile menu
+
+  debug(`TERM VR)                                              ' create the menu/output window
+
+  repeat until voice.start(SCL_PIN, SDA_PIN, BUS_KHZ, i2c.PU_NONE)
+    debug(`VR "DF2301Q not found - check wiring (SCL=", udec_(SCL_PIN), " SDA=", udec_(SDA_PIN), ")", 13)
+    waitms(2000)
+  debug(`VR "isp_voice_recognizer ", zstr_(voice.version()), " - device ready", 13)
+
+  ' one-time configuration (must happen BEFORE startPoller per the bus-ownership contract)
+  voice.setVolume(4)
+  voice.setMuteMode(0)
+  voice.setWakeTime(15)
+  voice.playByCMDID(voice.CMD_HELLO_ROBOT)                     ' sign of life
+
+  repeat
+    showMenu()
+    case waitKey()
+      "1": runSync()
+      "2": runScanner()
+      "3": runPoller()
+
+
+PRI showMenu()
+
+  debug(`VR 13, "=== isp_voice_recognizer demo ===", 13)
+  debug(`VR "  1) Simple synchronous", 13)
+  debug(`VR "  2) Passive scanner-poll", 13)
+  debug(`VR "  3) Background poller cog", 13)
+  debug(`VR "Select 1-3 (then any key to stop a running profile)...", 13)
+
+
+PRI keyHit() : bHit
+
+'' Non-blocking: poll the DEBUG window; return TRUE if a key was pressed (its code is left in `key`)
+
+  debug(`VR PC_KEY(@key))
+  bHit := key <> 0
+
+
+PRI waitKey() : pressed
+
+'' Block until a key is pressed in the DEBUG window, return its code
+
+  repeat until keyHit()
+    waitms(20)
+  pressed := key
+
+
+PRI runSync() | cmdId
+
+'' Profile 1 -- simple synchronous: poll getCMDID() in the foreground loop
+
+  debug(`VR 13, "[1] Synchronous - press any key to stop", 13)
+  repeat
+    cmdId := voice.getCMDID()
+    if cmdId
+      debug(`VR "  CMDID = ", udec_(cmdId), 13)
+    if keyHit()
+      quit
+    waitms(100)
+
+
+PRI runScanner() | cmdId
+
+'' Profile 2 -- passive scanner-poll: a foreign "device scanner" cog dipping in among other devices
+
+  debug(`VR 13, "[2] Scanner-poll - press any key to stop", 13)
+  repeat
+    ' ... a real scanner would service its other devices here ...
+    cmdId := voice.pollCMDID()                                ' one quick, non-blocking dip
+    if cmdId
+      debug(`VR "  CMDID = ", udec_(cmdId), 13)
+    if keyHit()
+      quit
+    waitms(200)
+
+
+PRI runPoller() | cmdId
+
+'' Profile 3 -- self-poller cog: driver owns a cog; foreground reads the mailbox non-blocking
+
+  debug(`VR 13, "[3] Background poller - press any key to stop", 13)
+  if not voice.startPoller()
+    debug(`VR "  no free cog!", 13)
+    return
+  pinlow(LED_PIN)
+  repeat
+    cmdId := voice.getLatest()
+    if cmdId
+      debug(`VR "  CMDID = ", udec_(cmdId), 13)
+    pintoggle(LED_PIN)                                         ' foreground stays responsive
+    if keyHit()
+      quit
+    waitms(100)
+  voice.stopPoller()
+  pinlow(LED_PIN)

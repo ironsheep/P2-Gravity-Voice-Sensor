@@ -1,0 +1,292 @@
+{Spin2_v46}                                                    ' enables channel-based DEBUG[n]() / DEBUG_MASK
+'' =================================================================================================
+''
+''   File....... isp_voice_recognizer.spin2
+''   Purpose.... P2 driver for the DFRobot DF2301Q "Gravity" offline voice-recognition sensor
+''               (SKU SEN0539) over I2C.  Hands the application the recognized command ID (CMDID),
+''               plays reply audio, and configures volume / mute / wake-duration.
+''   Author..... Stephen M Moraco
+''               Copyright (c) 2026 Iron Sheep Productions, LLC
+''               -- see end of file for terms of use
+''   E-mail..... stephen@ironsheep.biz
+''   Started.... 03 Jun 2026
+''   Updated.... 03 Jun 2026
+''
+''   Rests on... isp_i2c_singleton (bit-banged I2C bus, shared singleton)
+''   See........ DOCs/design/DRIVER-THEORY-OF-OPERATIONS.md (how this driver works)
+''               DOCs/reference/THEORY-OF-OPERATIONS.md   (device protocol / reference library)
+''
+'' =================================================================================================
+
+
+con { public command-word IDs }
+
+{Spin2_Doc_CON}
+'' Command-word IDs reported by getCMDID()/pollCMDID().  0 means "nothing recognized."  The full
+'' ~150-entry built-in vocabulary plus custom slots is tabulated in DOCs/reference and in
+'' REF/.../python/circuitpython/DFRobot_DF2301Q_Commands.py; only the load-bearing IDs are named here.
+
+  CMD_NONE        = 0                                           ' no command recognized (sentinel)
+  CMD_WAKE_LEARN  = 1                                           ' "wake-up words for learning"
+  CMD_HELLO_ROBOT = 2                                           ' default spoken wake word "Hello Robot"
+  ' NOTE: which CMDID enterWakeState() plays to wake the module is resolved on hardware
+  '       (reference finding F1) — see DOCs/plans §9 / task #9.
+
+
+con { device I2C addressing and registers }
+
+  DEV_ADDR        = $64                                         ' 7-bit I2C address (fixed)
+  DEV_WR          = (DEV_ADDR << 1)                             ' 8-bit write address -> $C8
+  DEV_RD          = (DEV_ADDR << 1) | 1                         ' 8-bit read address  -> $C9
+
+  REG_CMDID       = $02                                         ' read: latched recognized command ID
+  REG_PLAY_CMDID  = $03                                         ' write: play reply audio by command ID
+  REG_SET_MUTE    = $04                                         ' write: 1=mute, 0=unmute
+  REG_SET_VOLUME  = $05                                         ' write: playback volume
+  REG_WAKE_TIME   = $06                                         ' r/w: wake-up duration, seconds (0-255)
+
+
+con { channel-based DEBUG (Spin2 v46+) }
+
+  ' The driver owns DEBUG channel 1 (per the reserved allocation in DOCs/design §7: 0=I2C bus,
+  ' 1=voice driver).  DEBUG_MASK selects which DEBUG[n]() channels are COMPILED; a clear bit emits
+  ' no code, so the shipped default (0) has zero overhead.  Trace statements are added in task #6.
+  ' To trace driver activity, set:  DEBUG_MASK = (1 << DBG_VOICE)
+  DBG_VOICE       = 1                                           ' voice driver trace -> DEBUG channel 1
+  DEBUG_MASK      = 0                                           ' ship default: all channels off
+  VOICE_DEBUG     = (DEBUG_MASK >> DBG_VOICE) & 1               ' 1 when the DBG_VOICE channel is enabled
+
+
+OBJ
+
+  i2c : "isp_i2c_singleton"                                     ' shared bit-banged I2C bus
+
+
+VAR
+
+  long  sclPin                                                  ' bus pins (set by start())
+  long  sdaPin
+  long  lastReadTick                                            ' GETCT() of last CMDID bus read (50ms spacing)
+  long  cachedCMDID                                             ' last value read, returned when polled too soon
+  long  speakStartTick                                          ' GETCT() at last playByCMDID() (~1s busy window)
+  long  pollerCogId                                             ' self-poller cog id + 1 (0 = not running)
+  long  latestMailbox                                           ' poller -> foreground latest-CMDID mailbox (hub)
+  long  pollerStack[64]                                         ' stack for the self-poller cog
+
+
+DAT
+
+DRIVER_VERSION  byte    "0.1.0", 0                              ' grep'd by version-aware tooling
+
+
+pub version() : pStr
+
+'' Return a pointer to the driver version string
+
+  pStr := @DRIVER_VERSION
+
+
+pub start(scl, sda, khz, pullup) : bFound
+
+'' Initialize the I2C bus on the given pins and probe for the DF2301Q.
+'' -- khz: bus speed (100 standard / 400 / 1000); pullup: one of i2c.PU_NONE/PU_1K5/PU_3K3/PU_15K
+'' -- returns TRUE if the device acknowledges its address, FALSE if absent
+
+  sclPin := scl
+  sdaPin := sda
+  i2c.setup(scl, sda, khz, pullup)
+  bFound := i2c.present(DEV_WR)                                 ' start + write(addr); ACK == present
+  i2c.stop()                                                   ' finish the probe transaction
+  debug[DBG_VOICE]("voice: start present=", udec_(bFound))
+
+
+PRI writeReg(regAddr, byteVal)
+
+'' Write one byte BYTEVAL to device register REGADDR
+
+  i2c.start()
+  i2c.write(DEV_WR)
+  i2c.write(regAddr)
+  i2c.write(byteVal)
+  i2c.stop()
+
+
+PRI readReg(regAddr) : byteVal
+
+'' Read one byte from device register REGADDR.
+'' -- uses a REPEATED START (no STOP between the register write and the data read), as the
+''    DF2301Q requires; NAK the single byte to end the read
+
+  i2c.start()
+  i2c.write(DEV_WR)                                            ' point at the register
+  i2c.write(regAddr)
+  i2c.start()                                                  ' REPEATED start -- no stop here
+  i2c.write(DEV_RD)
+  byteVal := i2c.read(i2c.NAK)                                 ' one byte, NAK on last
+  i2c.stop()
+
+
+pub getCMDID() : cmdId
+
+'' Get the latest recognized command-word ID (0 = none recognized).
+'' -- simple-profile alias for pollCMDID(); non-blocking
+
+  cmdId := pollCMDID()
+
+
+pub pollCMDID() : cmdId
+
+'' Non-blocking poll for the latest recognized command-word ID (0 = none).
+'' -- enforces >=50ms between actual bus reads via a tick check: if polled sooner, returns the
+''    cached value WITHOUT touching the bus.  No waitms -- safe to call from a shared scanner cog.
+
+  if (getct() - lastReadTick) +< (clkfreq / 20)                ' < 50ms since the last bus read?
+    return cachedCMDID                                         ' too soon: return cached, no bus traffic
+  cachedCMDID := readReg(REG_CMDID)
+  lastReadTick := getct()
+  if cachedCMDID
+    debug[DBG_VOICE]("voice: recognized CMDID=", udec_(cachedCMDID))
+  cmdId := cachedCMDID
+
+
+pub playByCMDID(cmdId)
+
+'' Play the reply audio for command ID CMDID.
+'' -- fire-and-return: the module needs ~1s to play, but this does NOT block; isSpeaking() reports
+''    the busy window instead
+
+  debug[DBG_VOICE]("voice: play CMDID=", udec_(cmdId))
+  writeReg(REG_PLAY_CMDID, cmdId)
+  speakStartTick := getct()
+
+
+pub isSpeaking() : bSpeaking
+
+'' TRUE while still within the ~1s play window opened by the last playByCMDID()
+
+  bSpeaking := (getct() - speakStartTick) +< clkfreq           ' elapsed < 1 second?
+
+
+pub enterWakeState()
+
+'' Programmatically put the module into its wake state via the play path.
+'' -- F1 (DOCs/reference §7): the exact wake CMDID -- HelloRobot(2) vs WakeUpWordsForLearning(1) --
+''    is confirmed on hardware in task #9.  Callers use THIS method, never a bare literal.
+
+  playByCMDID(CMD_HELLO_ROBOT)
+
+
+pub getWakeTime() : wakeSecs
+
+'' Read the configured wake-up duration, in seconds
+
+  wakeSecs := readReg(REG_WAKE_TIME)
+
+
+pub setWakeTime(wakeSecs)
+
+'' Set the wake-up duration, 0..255 seconds
+
+  debug[DBG_VOICE]("voice: setWakeTime ", udec_(wakeSecs))
+  writeReg(REG_WAKE_TIME, wakeSecs)
+
+
+pub setVolume(volLevel)
+
+'' Set playback volume.
+'' -- documented range is 1..7 but the true range is wider (F2, confirmed at #9); the value is
+''    passed through WITHOUT clamping
+
+  debug[DBG_VOICE]("voice: setVolume ", udec_(volLevel))
+  writeReg(REG_SET_VOLUME, volLevel)
+
+
+pub setMuteMode(muteOn)
+
+'' Set mute mode -- nonzero MUTEON mutes, 0 unmutes (normalized to 1/0 for the device)
+
+  debug[DBG_VOICE]("voice: setMute ", udec_(muteOn))
+  writeReg(REG_SET_MUTE, (muteOn <> 0) & 1)
+
+
+'' =================================================================================================
+''   Self-poller cog (usage profile 2)
+''
+''   While the poller runs it OWNS the shared I2C bus.  Callers must read results via getLatest()
+''   ONLY, and must configure volume/mute/wake-time BEFORE startPoller() (reconfigure = stopPoller,
+''   change, startPoller).  Do NOT call the synchronous bus methods (getCMDID/playByCMDID/set*) while
+''   the poller is running -- two cogs on one bus.
+'' =================================================================================================
+
+pub startPoller() : ok | startedCog
+
+'' Launch a background cog that polls the sensor and publishes the latest CMDID to a mailbox.
+'' -- returns TRUE on success, FALSE if already running or no free cog
+
+  if pollerCogId <> 0
+    return false                                              ' already running -- refuse
+  startedCog := cogspin(NEWCOG, pollerTask(), @pollerStack)
+  if startedCog == -1
+    return false                                              ' no free cog
+  pollerCogId := startedCog + 1                               ' store cog id + 1 (0 = not running)
+  ok := true
+
+
+pub stopPoller()
+
+'' Stop the background poller cog and release the bus
+
+  if pollerCogId <> 0
+    cogstop(pollerCogId - 1)
+    pollerCogId := 0
+    latestMailbox := 0
+
+
+pub getLatest() : cmdId
+
+'' Non-blocking read of the latest recognized CMDID published by the poller (0 = none since last
+'' read).  Latest-only: the mailbox is cleared on read.
+
+  cmdId := latestMailbox
+  latestMailbox := 0
+
+
+pri pollerTask() | cmdId
+
+'' Background-cog body: poll the sensor and publish non-zero results to the mailbox.  This is the
+'' one place a blocking wait is allowed, because it runs in the poller's OWN cog.
+
+  repeat
+    cmdId := pollCMDID()
+    if cmdId <> 0
+      latestMailbox := cmdId
+    waitms(50)
+
+
+CON { license }
+
+{{
+ -------------------------------------------------------------------------------------------------
+  MIT License
+
+  Copyright (c) 2026 Iron Sheep Productions, LLC
+
+  Permission is hereby granted, free of charge, to any person obtaining a copy
+  of this software and associated documentation files (the "Software"), to deal
+  in the Software without restriction, including without limitation the rights
+  to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+  copies of the Software, and to permit persons to whom the Software is
+  furnished to do so, subject to the following conditions:
+
+  The above copyright notice and this permission notice shall be included in all
+  copies or substantial portions of the Software.
+
+  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+  IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+  AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+  LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+  SOFTWARE.
+ =================================================================================================
+}}

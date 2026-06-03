@@ -267,3 +267,19 @@ CMDID 0 when idle; rapid commands behave per latest-only mailbox. Error: unplugg
 the poller cog. §5 wraps the demo around all three. §6 adds driver tracing. §7–§8 produce the spec
 and refresh docs. §9 validates on hardware and resolves F1/F2. Each section is a complete,
 first-testable deliverable.
+
+---
+
+## Section ↔ task cross-reference (tag `voicerec-v0.1.0`)
+
+| Plan § | Deliverable | Task | seq |
+| ------ | ----------- | ---- | --- |
+| §1 | Object skeleton, constants, version, DEBUG-channel CON | «#1» | 1 |
+| §2 | I²C register access layer (writeReg/readReg/start probe) | «#2» | 2 |
+| §3 | Synchronous primitives & non-blocking timing | «#3» | 3 |
+| §4 | Self-poller cog + latest-CMDID mailbox | «#4» | 4 |
+| §5 | Demo with runtime DEBUG-window menu | «#5» | 5 |
+| §6 | Channel-based DEBUG trace in the driver | «#6» | 6 |
+| §7 | Specification document | «#7» | 7 |
+| §8 | Documentation currency | «#8» | 8 |
+| §9 | Build & on-hardware verification (resolves F1/F2) | «#9» | 9 |

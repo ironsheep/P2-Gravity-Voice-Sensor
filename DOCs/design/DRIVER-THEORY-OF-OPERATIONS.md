@@ -9,10 +9,11 @@ discipline, and the I²C layer it rests on. It is distinct from
 device protocol* we ported from. Read the reference doc for what the chip does on the wire; read
 this one for how our object is built.
 
-> **Status: SEED / living design doc (2026-06-03).** The driver object does not exist yet. What
-> exists today is the I²C layer (`src/isp_i2c_singleton.spin2`, converted — see §6–7). This doc
-> records the agreed design so implementation can follow it; sections marked *(designed)* are not
-> yet code, *(implemented)* are.
+> **Status: living design doc.** Build 0.1.0 is implemented: `src/isp_voice_recognizer.spin2`
+> (driver), `src/demo_voice_recognizer.spin2` (demo/top), on `src/isp_i2c_singleton.spin2` (bus) —
+> all compile clean under `pnut-ts -d`. Sections marked *(implemented)* are code; *(planned)* are
+> not yet built (the `test_` harness). On-hardware behavior + the F1/F2 values land in task §9.
+> The formal API contract is `DOCs/spec/P2-Gravity-Voice-Sensor-Specification.md`.
 
 ---
 
@@ -34,11 +35,11 @@ implement only the I²C class). If added later it would be a sibling object, `is
 ## 2. File set & layering *(designed; I²C layer implemented)*
 
 ```
-  demo_voice_recognizer.spin2     top / demo — selects which usage mode to exercise   (designed)
-  test_voice_recognizer.spin2     on-hardware test harness                            (designed)
+  demo_voice_recognizer.spin2     top / demo — selects which usage mode to exercise   (implemented)
+  test_voice_recognizer.spin2     on-hardware test harness                            (planned)
         |
         v
-  isp_voice_recognizer.spin2      THIS driver — DF2301Q register semantics            (designed)
+  isp_voice_recognizer.spin2      THIS driver — DF2301Q register semantics            (implemented)
         |
         v
   isp_i2c_singleton.spin2         bit-banged I²C bus (shared by all I²C drivers)       (implemented)
@@ -53,7 +54,7 @@ This is what makes the scanner-cog model work — many device drivers, one bus.
 
 ---
 
-## 3. Usage profiles *(designed)*
+## 3. Usage profiles *(implemented)*
 
 The driver offers **three ways to be used**, all built on the same synchronous bus primitives. The
 demo selects one.
@@ -76,7 +77,7 @@ than commands arrive can coalesce results — profile 2 (a tight poller cog) min
 
 ---
 
-## 4. Non-blocking timing discipline *(designed)*
+## 4. Non-blocking timing discipline *(implemented)*
 
 The reference library blocks its caller: `getCMDID` does `delay(50)`, `playByCMDID` does
 `delay(1000)`. A shared scanner cog cannot tolerate that. Our rules:
@@ -96,30 +97,33 @@ The net effect: a scanner pass that includes this device costs **one short I²C 
 
 ---
 
-## 5. Public API sketch *(designed — names subject to refinement at implementation)*
+## 5. Public API — as implemented *(implemented)*
+
+The full contract (parameters, returns, blocking, edge semantics) is in
+`DOCs/spec/P2-Gravity-Voice-Sensor-Specification.md` §3. The 14 public methods:
 
 | Method | Blocks? | Notes |
 |---|---|---|
-| `start(sclPin, sdaPin, khz, pullup) : ok` | no | init bus (via I²C singleton), probe 0x64, return present/absent |
-| `pollCMDID() : id` | no | scanner entry point: one read or cached, 50 ms spacing enforced by time-check |
-| `getCMDID() : id` | no | alias/simple form for synchronous use |
-| `playByCMDID(id)` | no | issue write; track busy-until `ct+1s` |
-| `isSpeaking() : flag` | no | true while inside the post-play window |
-| `getWakeTime() : secs` | no | read reg 0x06 |
-| `setWakeTime(secs)` | no | write reg 0x06 (0–255) |
-| `setVolume(vol)` | no | write reg 0x05 (documented 1–7; do not hard-clamp — see ref doc finding F2) |
-| `setMuteMode(onOff)` | no | write reg 0x04 |
-| `startPoller()` / `stopPoller()` | no | profile 2: launch/stop the poller cog |
-| `getLatest() : id` | no | profile 2: non-blocking mailbox read |
-| `isAwake() : flag` | no | optional, if a wake indicator is tracked |
-| `stop()` | no | release |
+| `version() : pStr` | no | pointer to the version string (`"0.1.0"`) |
+| `start(scl, sda, khz, pullup) : bFound` | no | init bus (via I²C singleton), probe 0x64, return present/absent |
+| `pollCMDID() : cmdId` | no | scanner entry point: one read or cached, 50 ms spacing by time-check |
+| `getCMDID() : cmdId` | no | alias/simple form for synchronous use |
+| `playByCMDID(cmdId)` | no | issue write; track busy-until `ct+1s` |
+| `isSpeaking() : bSpeaking` | no | true while inside the post-play window |
+| `enterWakeState()` | no | wake via the play path (CMDID per F1) |
+| `getWakeTime() : wakeSecs` | no | read reg 0x06 |
+| `setWakeTime(wakeSecs)` | no | write reg 0x06 (0–255) |
+| `setVolume(volLevel)` | no | write reg 0x05 (no hard-clamp — see ref doc finding F2) |
+| `setMuteMode(muteOn)` | no | write reg 0x04 (normalized to 1/0) |
+| `startPoller() : ok` / `stopPoller()` | no | profile 2: launch/stop the poller cog |
+| `getLatest() : cmdId` | no | profile 2: non-blocking mailbox read, clear-on-read |
 
-Open hardware questions to resolve at bring-up are tracked in the reference doc §7 (notably **F1**:
-which CMDID enters wake state — verify on hardware; **F2**: true volume range).
+Open hardware questions resolved at bring-up (task §9): **F1** (which CMDID enters wake state) and
+**F2** (true volume range) — see reference doc §7.
 
 ---
 
-## 6. Concurrency & bus-ownership rule *(designed)*
+## 6. Concurrency & bus-ownership rule *(implemented)*
 
 When the self-poller cog (profile 2) is running, **that cog owns the bus**. The foreground must
 read results via `getLatest()` and must **not** call the synchronous bus primitives directly, or
@@ -149,16 +153,17 @@ collide when several ISP drivers trace in one application:
 | Channel | Owner | Status |
 |--------:|-------|--------|
 | 0 | `isp_i2c_singleton` — I²C bus trace (`DBG_I2C`) | implemented |
-| 1 | `isp_voice_recognizer` — driver-level trace | reserved |
+| 1 | `isp_voice_recognizer` — recognized / play / config / start trace (`DBG_VOICE`) | implemented |
 | 2 | poller-cog activity | reserved |
 | 3–31 | unassigned | — |
 
-**Discipline for keeping DEBUG out of the critical path** (established in the I²C layer, to be
-followed by the driver): trace data is **buffered cheaply during** a transaction (a single
-`mode|value` WORD per bus op, outside the inline-PASM `org…end` blocks) by `record()`, and only
-**emitted after** the transaction completes (at `stop()`) by `report()`. No DEBUG statement ever
-sits inside a bit-timing loop. Each object ships with its channel **off** (`DEBUG_MASK = 0`); a
-developer flips one line (`DEBUG_MASK = (1 << DBG_x)`) and rebuilds to trace.
+**Discipline for keeping DEBUG out of the critical path.** Two mechanisms, by layer: the I²C
+layer **buffers cheaply during** a transaction (a single `mode|value` WORD per bus op, outside the
+inline-PASM `org…end` blocks) via `record()` and only **emits after** the transaction (at `stop()`)
+via `report()`; the driver emits `debug[DBG_VOICE]()` **only at semantic boundaries** (recognized
+CMDID, play issued, config writes, the `start()` probe) — never inside the poller-pace loop or any
+tight loop. Each object ships with its channel **off** (`DEBUG_MASK = 0`); a developer flips one
+line (`DEBUG_MASK = (1 << DBG_x)`) and rebuilds to trace.
 
 ---
 
