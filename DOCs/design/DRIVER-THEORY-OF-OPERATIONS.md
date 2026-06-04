@@ -32,17 +32,19 @@ implement only the I²C class). If added later it would be a sibling object, `is
 
 ---
 
-## 2. File set & layering *(designed; I²C layer implemented)*
+## 2. File set & layering *(implemented)*
 
 ```
-  demo_voice_recognizer.spin2     top / demo — selects which usage mode to exercise   (implemented)
-  test_voice_recognizer.spin2     on-hardware test harness                            (planned)
+  demo_voice_recognizer.spin2     top / demo — selects which usage profile to run      (implemented)
+  test_voice_recognizer.spin2     on-hardware test harness                             (planned)
         |
         v
-  isp_voice_recognizer.spin2      THIS driver — DF2301Q register semantics            (implemented)
+  isp_voice_recognizer.spin2      THIS driver — DF2301Q semantics + CMD_* catalog      (implemented)
         |
         v
-  isp_i2c_singleton.spin2         bit-banged I²C bus (shared by all I²C drivers)       (implemented)
+  isp_i2c_singleton.spin2         bit-banged I²C bus (shared singleton)                (implemented)
+
+  isp_voice_command_names.spin2   OPTIONAL ID→phrase cmdName() — opt-in by OBJ ref      (implemented)
 ```
 
 Naming follows the project convention (parallel role prefixes, not stacked): `isp_` = a driver we

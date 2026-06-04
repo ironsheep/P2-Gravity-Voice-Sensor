@@ -107,16 +107,21 @@ none inside a poll loop.
 
 ## 7. Public command-word IDs
 
-Exported in the driver's `{Spin2_Doc_CON}` block (consumers reference via `voice.<NAME>`):
+The driver's `{Spin2_Doc_CON}` block names the **full built-in catalog** as `CMD_*` constants:
+the sentinel/wake words (`CMD_NONE`=0, `CMD_WAKE_LEARN`=1, `CMD_HELLO_ROBOT`=2), the custom slots
+(`CMD_CUSTOM_1`..`CMD_CUSTOM_17`, IDs 5–21), the ~120 built-in fixed commands
+(`CMD_GO_FORWARD`=22 … `CMD_CLOSE_THE_DOOR`=142), and the learning/delete control words (200–208).
+Applications **react by ID** via `voice.<NAME>` — e.g. `case id: voice.CMD_RETREAT:`. Constants
+cost nothing unless referenced.
 
-| Name | ID | Meaning |
-|------|---:|---------|
-| `CMD_NONE` | 0 | No command recognized (the sentinel) |
-| `CMD_WAKE_LEARN` | 1 | "Wake-up words for learning" |
-| `CMD_HELLO_ROBOT` | 2 | Default spoken wake word "Hello Robot" |
+For the **human-readable phrase**, include the optional object `isp_voice_command_names` and call
+`names.cmdName(cmdId) : pStr` (returns e.g. `"Retreat"`; `"(custom)"` for 5–21, `"(unknown)"`
+otherwise). It is a *separate* object so its string table is compiled in **only when included** —
+react-by-ID apps don't pay for it.
 
-The full ~150-entry vocabulary is tabulated in
-`DOCs/reference/THEORY-OF-OPERATIONS.md` §5 and the reference `DFRobot_DF2301Q_Commands.py`.
+IDs and phrases are ported from `DFRobot_DF2301Q_Commands.py`. **Validate against the product's
+printed command-word card on hardware** (#9) — firmware revisions have reshuffled lists. Full table
+also in `DOCs/reference/THEORY-OF-OPERATIONS.md` §5.
 
 ## 8. Bring-up determinations (resolved on hardware — task §9)
 

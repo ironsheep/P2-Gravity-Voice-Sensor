@@ -29,6 +29,7 @@ OBJ
 
   voice : "isp_voice_recognizer"                               ' the driver under demonstration
   i2c   : "isp_i2c_singleton"                                  ' referenced only for the PU_* constants
+  names : "isp_voice_command_names"                            ' OPTIONAL: ID -> phrase lookup (string table)
 
 
 VAR
@@ -70,6 +71,13 @@ PRI showMenu()
   debug(`VR "Select 1-3 (then any key to stop a running profile)...", 13)
 
 
+PRI reportCmd(cmdId)
+
+'' Print a recognized command: its numeric ID and the human-readable phrase (via the names object)
+
+  debug(`VR "  CMDID ", udec_(cmdId), " = ", zstr_(names.cmdName(cmdId)), 13)
+
+
 PRI keyHit() : bHit
 
 '' Non-blocking: poll the DEBUG window; return TRUE if a key was pressed (its code is left in `key`)
@@ -95,7 +103,7 @@ PRI runSync() | cmdId
   repeat
     cmdId := voice.getCMDID()
     if cmdId
-      debug(`VR "  CMDID = ", udec_(cmdId), 13)
+      reportCmd(cmdId)
     if keyHit()
       quit
     waitms(100)
@@ -110,7 +118,7 @@ PRI runScanner() | cmdId
     ' ... a real scanner would service its other devices here ...
     cmdId := voice.pollCMDID()                                ' one quick, non-blocking dip
     if cmdId
-      debug(`VR "  CMDID = ", udec_(cmdId), 13)
+      reportCmd(cmdId)
     if keyHit()
       quit
     waitms(200)
@@ -128,7 +136,7 @@ PRI runPoller() | cmdId
   repeat
     cmdId := voice.getLatest()
     if cmdId
-      debug(`VR "  CMDID = ", udec_(cmdId), 13)
+      reportCmd(cmdId)
     pintoggle(LED_PIN)                                         ' foreground stays responsive
     if keyHit()
       quit

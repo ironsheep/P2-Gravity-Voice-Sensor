@@ -22,15 +22,170 @@
 con { public command-word IDs }
 
 {Spin2_Doc_CON}
-'' Command-word IDs reported by getCMDID()/pollCMDID().  0 means "nothing recognized."  The full
-'' ~150-entry built-in vocabulary plus custom slots is tabulated in DOCs/reference and in
-'' REF/.../python/circuitpython/DFRobot_DF2301Q_Commands.py; only the load-bearing IDs are named here.
+'' Command-word IDs reported by getCMDID()/pollCMDID().  0 means "nothing recognized."  These are the
+'' DF2301Q's built-in fixed vocabulary (ported from REF/.../DFRobot_DF2301Q_Commands.py); the human
+'' phrase for an ID is available from the optional isp_voice_command_names object (cmdName()).
+'' Constants cost nothing unless referenced.  VALIDATE against the product's printed command-word
+'' card on hardware (#9) -- firmware revisions have reshuffled lists.
 
-  CMD_NONE        = 0                                           ' no command recognized (sentinel)
-  CMD_WAKE_LEARN  = 1                                           ' "wake-up words for learning"
-  CMD_HELLO_ROBOT = 2                                           ' default spoken wake word "Hello Robot"
+  ' sentinel & wake words
+  CMD_NONE                          = 0    ' Silence / nothing recognized
+  CMD_WAKE_LEARN                    = 1    ' WakeUpWordsForLearning
+  CMD_HELLO_ROBOT                   = 2    ' HelloRobot (default wake word)
   ' NOTE: which CMDID enterWakeState() plays to wake the module is resolved on hardware
-  '       (reference finding F1) — see DOCs/plans §9 / task #9.
+  '       (reference finding F1) -- see DOCs/plans §9 / task #9.
+
+  ' custom slots (user-trained; the spoken phrase is whatever you record)
+  CMD_CUSTOM_1                      = 5
+  CMD_CUSTOM_2                      = 6
+  CMD_CUSTOM_3                      = 7
+  CMD_CUSTOM_4                      = 8
+  CMD_CUSTOM_5                      = 9
+  CMD_CUSTOM_6                      = 10
+  CMD_CUSTOM_7                      = 11
+  CMD_CUSTOM_8                      = 12
+  CMD_CUSTOM_9                      = 13
+  CMD_CUSTOM_10                     = 14
+  CMD_CUSTOM_11                     = 15
+  CMD_CUSTOM_12                     = 16
+  CMD_CUSTOM_13                     = 17
+  CMD_CUSTOM_14                     = 18
+  CMD_CUSTOM_15                     = 19
+  CMD_CUSTOM_16                     = 20
+  CMD_CUSTOM_17                     = 21
+
+  ' built-in fixed commands (note: 28 is skipped in the reference list)
+  CMD_GO_FORWARD                    = 22
+  CMD_RETREAT                       = 23
+  CMD_PARK_A_CAR                    = 24
+  CMD_TURN_LEFT_90_DEG              = 25   ' TurnLeftNinetyDegrees
+  CMD_TURN_LEFT_45_DEG              = 26   ' TurnLeftFortyFiveDegrees
+  CMD_TURN_LEFT_30_DEG              = 27   ' TurnLeftThirtyDegrees
+  CMD_TURN_RIGHT_45_DEG             = 29   ' TurnRightFortyFiveDegrees
+  CMD_TURN_RIGHT_30_DEG             = 30   ' TurnRightThirtyDegrees
+  CMD_SHIFT_DOWN_A_GEAR             = 31
+  CMD_LINE_TRACKING_MODE            = 32
+  CMD_LIGHT_TRACKING_MODE           = 33
+  CMD_BLUETOOTH_MODE                = 34
+  CMD_OBSTACLE_AVOIDANCE_MODE       = 35
+  CMD_FACE_RECOGNITION              = 36
+  CMD_OBJECT_TRACKING               = 37
+  CMD_OBJECT_RECOGNITION            = 38
+  CMD_LINE_TRACKING                 = 39
+  CMD_COLOR_RECOGNITION             = 40
+  CMD_TAG_RECOGNITION               = 41
+  CMD_OBJECT_SORTING                = 42
+  CMD_QR_CODE_RECOGNITION           = 43
+  CMD_GENERAL_SETTINGS              = 44
+  CMD_CLEAR_SCREEN                  = 45
+  CMD_LEARN_ONCE                    = 46
+  CMD_FORGET                        = 47
+  CMD_LOAD_MODEL                    = 48
+  CMD_SAVE_MODEL                    = 49
+  CMD_TAKE_PHOTOS_AND_SAVE_THEM     = 50
+  CMD_SAVE_AND_RETURN               = 51
+  CMD_DISPLAY_NUMBER_ZERO           = 52
+  CMD_DISPLAY_NUMBER_ONE            = 53
+  CMD_DISPLAY_NUMBER_TWO            = 54
+  CMD_DISPLAY_NUMBER_THREE          = 55
+  CMD_DISPLAY_NUMBER_FOUR           = 56
+  CMD_DISPLAY_NUMBER_FIVE           = 57
+  CMD_DISPLAY_NUMBER_SIX            = 58
+  CMD_DISPLAY_NUMBER_SEVEN          = 59
+  CMD_DISPLAY_NUMBER_EIGHT          = 60
+  CMD_DISPLAY_NUMBER_NINE           = 61
+  CMD_DISPLAY_SMILEY_FACE           = 62
+  CMD_DISPLAY_CRYING_FACE           = 63
+  CMD_DISPLAY_HEART                 = 64
+  CMD_TURN_OFF_DOT_MATRIX           = 65
+  CMD_READ_CURRENT_POSTURE          = 66
+  CMD_READ_AMBIENT_LIGHT            = 67
+  CMD_READ_COMPASS                  = 68
+  CMD_READ_TEMPERATURE              = 69
+  CMD_READ_ACCELERATION             = 70
+  CMD_READING_SOUND_INTENSITY       = 71
+  CMD_CALIBRATE_ELECTRONIC_GYRO     = 72   ' CalibrateElectronicGyroscope
+  CMD_TURN_ON_THE_CAMERA            = 73
+  CMD_TURN_OFF_THE_CAMERA           = 74
+  CMD_TURN_ON_THE_FAN               = 75
+  CMD_TURN_OFF_THE_FAN              = 76
+  CMD_FAN_SPEED_GEAR_ONE            = 77   ' TurnFanSpeedToGearOne
+  CMD_FAN_SPEED_GEAR_TWO            = 78   ' TurnFanSpeedToGearTwo
+  CMD_FAN_SPEED_GEAR_THREE          = 79   ' TurnFanSpeedToGearThree
+  CMD_START_OSCILLATING             = 80
+  CMD_STOP_OSCILLATING              = 81
+  CMD_RESET                         = 82
+  CMD_SET_SERVO_10_DEG              = 83   ' SetServoToTenDegrees
+  CMD_SET_SERVO_30_DEG              = 84   ' SetServoToThirtyDegrees
+  CMD_SET_SERVO_45_DEG              = 85   ' SetServoToFortyFiveDegrees
+  CMD_SET_SERVO_60_DEG              = 86   ' SetServoToSixtyDegrees
+  CMD_SET_SERVO_90_DEG              = 87   ' SetServoToNinetyDegrees
+  CMD_TURN_ON_THE_BUZZER            = 88
+  CMD_TURN_OFF_THE_BUZZER           = 89
+  CMD_TURN_ON_THE_SPEAKER           = 90
+  CMD_TURN_OFF_THE_SPEAKER          = 91
+  CMD_PLAY_MUSIC                    = 92
+  CMD_STOP_PLAYING                  = 93
+  CMD_THE_LAST_TRACK                = 94
+  CMD_THE_NEXT_TRACK                = 95
+  CMD_REPEAT_THIS_TRACK             = 96
+  CMD_VOLUME_UP                     = 97
+  CMD_VOLUME_DOWN                   = 98
+  CMD_CHANGE_VOLUME_TO_MAXIMUM      = 99
+  CMD_CHANGE_VOLUME_TO_MINIMUM      = 100
+  CMD_CHANGE_VOLUME_TO_MEDIUM       = 101
+  CMD_PLAY_POEM                     = 102
+  CMD_TURN_ON_THE_LIGHT             = 103
+  CMD_TURN_OFF_THE_LIGHT            = 104
+  CMD_BRIGHTEN_THE_LIGHT            = 105
+  CMD_DIM_THE_LIGHT                 = 106
+  CMD_ADJUST_BRIGHTNESS_TO_MAX      = 107   ' AdjustBrightnessToMaximum
+  CMD_ADJUST_BRIGHTNESS_TO_MIN      = 108   ' AdjustBrightnessToMinimum
+  CMD_INCREASE_COLOR_TEMPERATURE    = 109
+  CMD_DECREASE_COLOR_TEMPERATURE    = 110
+  CMD_ADJUST_COLOR_TEMP_TO_MAX      = 111   ' AdjustColorTemperatureToMaximum
+  CMD_ADJUST_COLOR_TEMP_TO_MIN      = 112   ' AdjustColorTemperatureToMinimum
+  CMD_DAYLIGHT_MODE                 = 113
+  CMD_MOONLIGHT_MODE                = 114
+  CMD_COLOR_MODE                    = 115
+  CMD_SET_TO_RED                    = 116
+  CMD_SET_TO_ORANGE                 = 117
+  CMD_SET_TO_YELLOW                 = 118
+  CMD_SET_TO_GREEN                  = 119
+  CMD_SET_TO_CYAN                   = 120
+  CMD_SET_TO_BLUE                   = 121
+  CMD_SET_TO_PURPLE                 = 122
+  CMD_SET_TO_WHITE                  = 123
+  CMD_TURN_ON_AC                    = 124
+  CMD_TURN_OFF_AC                   = 125
+  CMD_INCREASE_TEMPERATURE          = 126
+  CMD_DECREASE_TEMPERATURE          = 127
+  CMD_COOL_MODE                     = 128
+  CMD_HEAT_MODE                     = 129
+  CMD_AUTO_MODE                     = 130
+  CMD_DRY_MODE                      = 131
+  CMD_FAN_MODE                      = 132
+  CMD_ENABLE_BLOWING_UP_DOWN        = 133
+  CMD_DISABLE_BLOWING_UP_DOWN       = 134
+  CMD_ENABLE_BLOWING_RIGHT_LEFT     = 135
+  CMD_DISABLE_BLOWING_RIGHT_LEFT    = 136
+  CMD_OPEN_THE_WINDOW               = 137
+  CMD_CLOSE_THE_WINDOW              = 138
+  CMD_OPEN_CURTAIN                  = 139
+  CMD_CLOSE_CURTAIN                 = 140
+  CMD_OPEN_THE_DOOR                 = 141
+  CMD_CLOSE_THE_DOOR                = 142
+
+  ' learning / delete control words
+  CMD_LEARNING_WAKE_WORD            = 200
+  CMD_LEARNING_COMMAND_WORD         = 201
+  CMD_RE_LEARN                      = 202
+  CMD_EXIT_LEARNING                 = 203
+  CMD_I_WANT_TO_DELETE              = 204
+  CMD_DELETE_WAKE_WORD              = 205
+  CMD_DELETE_COMMAND_WORD           = 206
+  CMD_EXIT_DELETING                 = 207
+  CMD_DELETE_ALL                    = 208
 
 
 con { device I2C addressing and registers }
