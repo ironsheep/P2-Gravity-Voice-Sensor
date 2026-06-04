@@ -34,6 +34,8 @@ con
   #0, PU_NONE, PU_1K5, PU_3K3, PU_15K                           ' pull-up options
   #0, ACK, NAK
 
+  STRETCH_LIMIT = 4_000_000                                     ' max clock-stretch spin iterations in read() (~tens of ms) before giving up
+
   #0, MK_NOTHING, MK_START, MK_WRITE, MK_READ, MK_STOP, MK_SDA, MK_SCL
 
   MAX_LOG_ENTRIES = 30
@@ -53,6 +55,8 @@ DAT
 sclpin        long      0                               ' i2c bus pins
 sdapin        long      0
 clktix        long      0                               ' system ticks in 1/4 period
+
+dbgStretchTO  long      0                               ' bring-up: 1 if the last read() stretch wait timed out
 
 ' for debug dumps
 logBytes      WORD      0[MAX_LOG_ENTRIES]
@@ -180,10 +184,13 @@ pub wait(devid) | ackbit
   until (ackbit == ACK)
 
 
-pub start() | scl, sda, tix
+pub start() | scl, sda, tix, tmo
 
-'' Create I2C start sequence
-'' -- will wait if I2C bus SCL pin is held low
+'' Create I2C (or repeated-) start sequence
+'' -- honors clock-stretching: after releasing SCL high, waits (bounded) until SCL actually reads
+''    high before forming the START.  Critical for the repeated-START of a register read: the
+''    DF2301Q holds SCL low after the register-pointer write, so without this wait the START
+''    condition never forms and the read half never reaches the bus.
 
   scl := sclpin
   sda := sdapin
@@ -192,10 +199,14 @@ pub start() | scl, sda, tix
 
   org
                 drvh      sda                                   ' both high
-                drvh      scl
-                waitx     tix
+                drvh      scl                                   ' release scl
+                mov       tmo, ##STRETCH_LIMIT                  ' clock-stretch: wait for scl to truly rise
+.st_wait        testp     scl                           wc
+        if_c    jmp       #.st_go
+                djnz      tmo, #.st_wait
+.st_go          waitx     tix
 
-                drvl      sda                                   ' start sequence
+                drvl      sda                                   ' start sequence (SDA falls while SCL high)
                 waitx     tix
 
                 drvl      scl
@@ -280,11 +291,12 @@ pub wr_block(p_block, count) : ackbit | i2cbyte, scl, sda, tix
   end
 
 
-pub read(ackbit) : i2cbyte | scl, sda, tix
+pub read(ackbit) : i2cbyte | scl, sda, tix, cnt, tmo
 
 '' Read byte from I2C bus
-'' -- ackbit is state of ack bit
-''    * usually NAK for last byte read
+'' -- ackbit is state of ack bit (usually NAK for last byte read)
+'' -- honors clock-stretch: per data bit, release SCL then wait (bounded) for it to actually rise
+''    before sampling.  The DF2301Q holds SCL low while it produces read data.
 
   'longmove(@scl, @sclpin, 2)
   scl := sclpin
@@ -292,18 +304,23 @@ pub read(ackbit) : i2cbyte | scl, sda, tix
   tix := clktix
 
   org
-                drvh      sda                                   ' pull-up sda
+                drvh      sda                                   ' release sda (open-drain, pull-up)
+                mov       cnt, #8                               ' read 8 bits, msb first
 
-.rd_byte        rep       #9, #8                                ' read 8 bits, msb first
-                 waitx    tix
-                 drvh     scl                                   ' scl high
-                 waitx    tix
-                 testp    sda                           wc      ' sample sda
-                 shl      i2cbyte, #1                           ' make room for new bit
-                 muxc     i2cbyte, #1                           ' sda --> i2cbyte.[0]
-                 waitx    tix
-                 drvl     scl                                   ' scl low
-                 waitx    tix
+.rd_byte        waitx     tix
+                drvh      scl                                   ' release scl high
+                mov       tmo, ##STRETCH_LIMIT
+.rd_wait        testp     scl                           wc      ' clock-stretch: wait until scl truly high
+        if_c    jmp       #.rd_smp
+                djnz      tmo, #.rd_wait
+.rd_smp         waitx     tix
+                testp     sda                           wc      ' sample sda
+                shl       i2cbyte, #1                           ' make room for new bit
+                muxc      i2cbyte, #1                           ' sda --> i2cbyte.[0]
+                waitx     tix
+                drvl      scl                                   ' scl low
+                waitx     tix
+                djnz      cnt, #.rd_byte
 
 .put_ack        testb     ackbit, #0                    wc      ' ackbit.[0] --> c
                 drvc      sda                                   ' c --> sda
@@ -364,10 +381,11 @@ pub rd_block(p_block, count, ackbit) | i2cbyte, scl, sda, tix
   end
 
 
-pub stop() | scl, sda, tix
+pub stop() | scl, sda, tix, tmo
 
 '' Create I2C stop sequence
-'' -- allows for clock stretch
+'' -- honors clock-stretch: waits (bounded) for SCL to actually rise before raising SDA, so the
+''    STOP condition forms even when the slave is holding SCL low after the final ACK
 
   scl := sclpin
   sda := sdapin
@@ -377,8 +395,13 @@ pub stop() | scl, sda, tix
   org
                 drvl      sda                                   ' hold sda low
                 drvh      scl                                   ' release scl
-                waitx     tix
-                drvh      sda                                   ' finish stop sequence
+                mov       tmo, ##STRETCH_LIMIT                  ' clock-stretch: wait for scl high
+.sp_wait        testp     scl                           wc
+        if_c    jmp       #.sp_go
+                djnz      tmo, #.sp_wait
+.sp_go          waitx     tix
+                drvh      sda                                   ' finish stop sequence (SDA rises while SCL high)
+                waitx     tix                                   ' bus-free time before the next start
   end
   report()
 

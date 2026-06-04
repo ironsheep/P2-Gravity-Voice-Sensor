@@ -208,7 +208,7 @@ con { channel-based DEBUG (Spin2 v46+) }
   ' no code, so the shipped default (0) has zero overhead.  Trace statements are added in task #6.
   ' To trace driver activity, set:  DEBUG_MASK = (1 << DBG_VOICE)
   DBG_VOICE       = 1                                           ' voice driver trace -> DEBUG channel 1
-  DEBUG_MASK      = 0                                           ' ship default: all channels off
+  DEBUG_MASK      = (1 << DBG_VOICE)                            ' TEMP bring-up trace (revert to 0 before commit)
   VOICE_DEBUG     = (DEBUG_MASK >> DBG_VOICE) & 1               ' 1 when the DBG_VOICE channel is enabled
 
 
@@ -252,33 +252,41 @@ pub start(scl, sda, khz, pullup) : bFound
   i2c.setup(scl, sda, khz, pullup)
   bFound := i2c.present(DEV_WR)                                 ' start + write(addr); ACK == present
   i2c.stop()                                                   ' finish the probe transaction
+  waitms(5)                                                    ' let the bus settle to its idle level
   debug[DBG_VOICE]("voice: start present=", udec_(bFound))
+  ' TEMP bring-up: idle bus levels -- both should read 1 (released to pull-ups); a 0 = stuck line
+  debug[DBG_VOICE]("voice: idle scl=", udec_(pinread(sclPin)), " sda=", udec_(pinread(sdaPin)))
 
 
-PRI writeReg(regAddr, byteVal)
+PRI writeReg(regAddr, byteVal) | ackWr, ackReg, ackVal
 
 '' Write one byte BYTEVAL to device register REGADDR
 
   i2c.start()
-  i2c.write(DEV_WR)
-  i2c.write(regAddr)
-  i2c.write(byteVal)
+  ackWr  := i2c.write(DEV_WR)
+  ackReg := i2c.write(regAddr)
+  ackVal := i2c.write(byteVal)
   i2c.stop()
+  ' TEMP bring-up: ack=0 means ACK (good). All zero -> the write reached the device.
+  debug[DBG_VOICE]("wrReg $", uhex_(regAddr), " = ", udec_(byteVal), " ack wr/reg/val=", udec_(ackWr), udec_(ackReg), udec_(ackVal))
 
 
-PRI readReg(regAddr) : byteVal
+PRI readReg(regAddr) : byteVal | ackWr, ackReg, ackRd
 
 '' Read one byte from device register REGADDR.
 '' -- uses a REPEATED START (no STOP between the register write and the data read), as the
 ''    DF2301Q requires; NAK the single byte to end the read
 
   i2c.start()
-  i2c.write(DEV_WR)                                            ' point at the register
-  i2c.write(regAddr)
-  i2c.start()                                                  ' REPEATED start -- no stop here
-  i2c.write(DEV_RD)
+  ackWr  := i2c.write(DEV_WR)                                  ' point at the register
+  ackReg := i2c.write(regAddr)
+  i2c.start()                                                  ' REPEATED start (matches reference)
+  ackRd  := i2c.write(DEV_RD)
   byteVal := i2c.read(i2c.NAK)                                 ' one byte, NAK on last
   i2c.stop()
+  ' TEMP bring-up: ack=0 means ACK (good), 1 means NAK. If ackRd=1 the slave never entered
+  ' read mode (addressing issue); if all acks=0 but val=0 the data phase is suspect.
+  debug[DBG_VOICE]("rdReg $", uhex_(regAddr), " ack wr/reg/rd=", udec_(ackWr), udec_(ackReg), udec_(ackRd), " val=", udec_(byteVal))
 
 
 pub getCMDID() : cmdId
@@ -299,8 +307,6 @@ pub pollCMDID() : cmdId
     return cachedCMDID                                         ' too soon: return cached, no bus traffic
   cachedCMDID := readReg(REG_CMDID)
   lastReadTick := getct()
-  if cachedCMDID
-    debug[DBG_VOICE]("voice: recognized CMDID=", udec_(cachedCMDID))
   cmdId := cachedCMDID
 
 

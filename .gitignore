@@ -224,3 +224,7 @@ docker-compose.override.yml
 .history/
 *.zip
 *.gz
+.vscode/settings.json
+src/tests/recordings/catalog.json
+src/pnut-term-settings.json
+*.bin
