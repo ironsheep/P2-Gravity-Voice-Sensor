@@ -39,6 +39,48 @@ Hardware features relevant to operation (from the product README):
 
 ---
 
+## Choosing a transport: I2C vs UART (quick reference)
+
+The module exposes the **same recognizer** over two wire protocols on the same connector —
+**pick one**. They are *not* feature-symmetric: each can do something the other can't.
+Use this section to decide; §3 (I2C) and §4 (UART) are the byte-level detail, and §6 F5
+records that the asymmetry is inherent to the device, not a bug.
+
+### Capability matrix
+
+| Capability | I2C (`0x64`) | UART (9600 8N1) | Notes |
+|------------|:---:|:---:|-------|
+| Read recognized CMDID (`getCMDID`) | ✅ reg `0x02` | ✅ `CMD_UP` frame, `msgData[0]` | 0 = nothing recognized on both |
+| Speak a reply (`playByCMDID`) | ✅ reg `0x03` | ✅ `PLAY_VOICE` frame | ~1 s to play on both |
+| Set volume | ✅ reg `0x05` | ✅ `settingCMD(SET_VOLUME)` | range caveat in §6 F2 |
+| Set mute / unmute | ✅ reg `0x04` | ✅ `settingCMD(SET_MUTE)` | |
+| Set wake-up duration | ✅ reg `0x06` | ✅ `settingCMD(SET_WAKE_TIME)` | |
+| **Read back** wake-up duration (`getWakeTime`) | ✅ reg `0x06` | ❌ — | **I2C only** (§6 F5) |
+| **Explicit** enter-wake command | ⚠️ play-path only (ID-1, ambiguous §6 F1) | ✅ `settingCMD(SET_ENTERWAKEUP)` | clean on UART; a guess on I2C |
+| **Reset the module** (`resetModule`) | ❌ — | ✅ `RESET_MODULE`, ~3 s settle | **UART only** |
+| Presence probe in `begin()` | ✅ real ACK check (write `0x00`) | ❌ just opens the port | only I2C confirms "sensor is there" (§3.5) |
+| Async status events (power-on, wake enter/exit, play start/end) | ❌ — | ⚠️ `NOTIFY_STATUS` *(constants only)* | protocol supports it; reference never reads it (§4.8) |
+| ACK / version / FLASH-UID queries | ❌ — | ⚠️ defined *(constants only)* | UART frame grammar allows; unused by reference (§4.8) |
+
+✅ = supported & exercised by the reference · ⚠️ = possible but caveated/unproven · ❌ = not available on that transport
+
+### Why pick one over the other
+
+| | I2C | UART |
+|---|---|---|
+| **Wire mechanics** | Trivial: write-reg-then-byte, single-byte payloads, repeated-START read. No framing. | Framed, length-prefixed, **checksummed** packets parsed by a byte-at-a-time state machine. |
+| **Best when** | You want the simplest possible host code, need to **read back wake-time**, want a real **presence probe**, or are sharing a bus from a scanner cog. | You need **module reset**, a **clean explicit wake**, or want to consume **async notifications** / ACK / version traffic. |
+| **Costs you** | Wake-ID is ambiguous (§6 F1); no reset; no async events. | A whole frame/checksum state machine to implement; **no `getWakeTime`**; a dedicated TX/RX pair. |
+| **Public surface** | `begin`, `getCMDID`, `playByCMDID`, `getWakeTime`, `setWakeTime`, `setVolume`, `setMuteMode` | `begin`, `getCMDID`, `playByCMDID`, `resetModule`, `settingCMD` |
+
+> **This port's choice:** the P2 driver implements **I2C only** (`isp_voice_recognizer`),
+> matching the reference's two-object split — simplest mechanics, real presence probe, and
+> wake-time read-back, and it sits cleanly on a shared I2C bus driven by a scanner cog. A
+> UART sibling (`isp_voice_recognizer_uart`) is the path to reset / explicit-wake / async
+> events if a future application needs them.
+
+---
+
 ## 2. The operating model (transport-independent)
 
 The behavior below is the same whether you reach the module over I2C or UART; only the
