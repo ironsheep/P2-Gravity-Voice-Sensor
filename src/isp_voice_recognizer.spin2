@@ -201,6 +201,23 @@ con { device I2C addressing and registers }
   REG_WAKE_TIME   = $06                                         ' r/w: wake-up duration, seconds (0-255)
 
 
+con { driver configuration }
+
+  ' SET_VOLUME is write-only in silicon, so the driver keeps a SHADOW of the volume: it writes this
+  ' known default at start() and updates the shadow on every setVolume(), making getVolume() truthful.
+  ' Change this to set the power-on volume your application wants.
+  DEF_VOLUME      = 7                                           ' volume applied at start() (documented range 1-7)
+
+
+con { status / error codes }
+
+  ' Per DOCs/policy/SPIN2-AUTHORING-GUIDE.md: action methods return a status CODE (SUCCESS = 0,
+  ' negative = a specific error), never a bare boolean.  Value queries (getCMDID/getVolume/...) return
+  ' their value; "is it there?" queries (start/startPoller) are boolean-by-nature and return TRUE/FALSE.
+  E_OK            =  0                                          ' success
+  E_NAK           = -1                                          ' device did not ACK a bus byte
+
+
 con { channel-based DEBUG (Spin2 v46+) }
 
   ' The driver owns DEBUG channel 1 (per the reserved allocation in DOCs/design §7: 0=I2C bus,
@@ -208,7 +225,7 @@ con { channel-based DEBUG (Spin2 v46+) }
   ' no code, so the shipped default (0) has zero overhead.  Trace statements are added in task #6.
   ' To trace driver activity, set:  DEBUG_MASK = (1 << DBG_VOICE)
   DBG_VOICE       = 1                                           ' voice driver trace -> DEBUG channel 1
-  DEBUG_MASK      = (1 << DBG_VOICE)                            ' TEMP bring-up trace (revert to 0 before commit)
+  DEBUG_MASK      = 0                                           ' ship default: channel-1 trace compiled out (set (1 << DBG_VOICE) to trace)
   VOICE_DEBUG     = (DEBUG_MASK >> DBG_VOICE) & 1               ' 1 when the DBG_VOICE channel is enabled
 
 
@@ -226,6 +243,7 @@ VAR
   long  speakStartTick                                          ' GETCT() at last playByCMDID() (~1s busy window)
   long  pollerCogId                                             ' self-poller cog id + 1 (0 = not running)
   long  latestMailbox                                           ' poller -> foreground latest-CMDID mailbox (hub)
+  long  curVolume                                               ' shadow of last-written volume (SET_VOLUME is write-only)
   long  pollerStack[64]                                         ' stack for the self-poller cog
 
 
@@ -245,6 +263,7 @@ pub start(scl, sda, khz, pullup) : bFound
 
 '' Initialize the I2C bus on the given pins and probe for the DF2301Q.
 '' -- khz: bus speed (100 standard / 400 / 1000); pullup: one of i2c.PU_NONE/PU_1K5/PU_3K3/PU_15K
+'' -- on success, sets volume to DEF_VOLUME so the driver's volume shadow is established (getVolume())
 '' -- returns TRUE if the device acknowledges its address, FALSE if absent
 
   sclPin := scl
@@ -256,37 +275,40 @@ pub start(scl, sda, khz, pullup) : bFound
   debug[DBG_VOICE]("voice: start present=", udec_(bFound))
   ' TEMP bring-up: idle bus levels -- both should read 1 (released to pull-ups); a 0 = stuck line
   debug[DBG_VOICE]("voice: idle scl=", udec_(pinread(sclPin)), " sda=", udec_(pinread(sdaPin)))
+  if bFound
+    setVolume(DEF_VOLUME)                                       ' apply known default -> seeds the volume shadow
 
 
-PRI writeReg(regAddr, byteVal) | ackWr, ackReg, ackVal
+PRI writeReg(regAddr, byteVal) : status | ackWr, ackReg, ackVal
 
-'' Write one byte BYTEVAL to device register REGADDR
+'' Write one byte BYTEVAL to device register REGADDR.
+'' -- returns E_OK if the device ACKed every byte, E_NAK if any byte was not acknowledged
 
   i2c.start()
   ackWr  := i2c.write(DEV_WR)
   ackReg := i2c.write(regAddr)
   ackVal := i2c.write(byteVal)
   i2c.stop()
-  ' TEMP bring-up: ack=0 means ACK (good). All zero -> the write reached the device.
-  debug[DBG_VOICE]("wrReg $", uhex_(regAddr), " = ", udec_(byteVal), " ack wr/reg/val=", udec_(ackWr), udec_(ackReg), udec_(ackVal))
+  status := E_OK
+  if (ackWr | ackReg | ackVal)                                  ' any non-zero ackbit == a NAK
+    status := E_NAK
+    debug[DBG_VOICE]("voice: write NAK reg=$", uhex_(regAddr), " val=", udec_(byteVal))
 
 
-PRI readReg(regAddr) : byteVal | ackWr, ackReg, ackRd
+PRI readReg(regAddr) : byteVal
 
 '' Read one byte from device register REGADDR.
 '' -- uses a REPEATED START (no STOP between the register write and the data read), as the
-''    DF2301Q requires; NAK the single byte to end the read
+''    DF2301Q requires; NAK the single byte to end the read.  No trace here: this is the
+''    poll-loop primitive; bus-byte detail is the I2C singleton's channel (DBG_I2C).
 
   i2c.start()
-  ackWr  := i2c.write(DEV_WR)                                  ' point at the register
-  ackReg := i2c.write(regAddr)
+  i2c.write(DEV_WR)                                            ' point at the register
+  i2c.write(regAddr)
   i2c.start()                                                  ' REPEATED start (matches reference)
-  ackRd  := i2c.write(DEV_RD)
+  i2c.write(DEV_RD)
   byteVal := i2c.read(i2c.NAK)                                 ' one byte, NAK on last
   i2c.stop()
-  ' TEMP bring-up: ack=0 means ACK (good), 1 means NAK. If ackRd=1 the slave never entered
-  ' read mode (addressing issue); if all acks=0 but val=0 the data phase is suspect.
-  debug[DBG_VOICE]("rdReg $", uhex_(regAddr), " ack wr/reg/rd=", udec_(ackWr), udec_(ackReg), udec_(ackRd), " val=", udec_(byteVal))
 
 
 pub getCMDID() : cmdId
@@ -307,17 +329,19 @@ pub pollCMDID() : cmdId
     return cachedCMDID                                         ' too soon: return cached, no bus traffic
   cachedCMDID := readReg(REG_CMDID)
   lastReadTick := getct()
+  if cachedCMDID                                               ' trace only recognitions, not idle polls
+    debug[DBG_VOICE]("voice: recognized CMDID=", udec_(cachedCMDID))
   cmdId := cachedCMDID
 
 
-pub playByCMDID(cmdId)
+pub playByCMDID(cmdId) : status
 
-'' Play the reply audio for command ID CMDID.
+'' Play the reply audio for command ID CMDID.  Returns E_OK / E_NAK.
 '' -- fire-and-return: the module needs ~1s to play, but this does NOT block; isSpeaking() reports
 ''    the busy window instead
 
   debug[DBG_VOICE]("voice: play CMDID=", udec_(cmdId))
-  writeReg(REG_PLAY_CMDID, cmdId)
+  status := writeReg(REG_PLAY_CMDID, cmdId)
   speakStartTick := getct()
 
 
@@ -328,13 +352,13 @@ pub isSpeaking() : bSpeaking
   bSpeaking := (getct() - speakStartTick) +< clkfreq           ' elapsed < 1 second?
 
 
-pub enterWakeState()
+pub enterWakeState() : status
 
-'' Programmatically put the module into its wake state via the play path.
+'' Programmatically put the module into its wake state via the play path.  Returns E_OK / E_NAK.
 '' -- F1 (DOCs/reference §7): the exact wake CMDID -- HelloRobot(2) vs WakeUpWordsForLearning(1) --
 ''    is confirmed on hardware in task #9.  Callers use THIS method, never a bare literal.
 
-  playByCMDID(CMD_HELLO_ROBOT)
+  status := playByCMDID(CMD_HELLO_ROBOT)
 
 
 pub getWakeTime() : wakeSecs
@@ -342,32 +366,45 @@ pub getWakeTime() : wakeSecs
 '' Read the configured wake-up duration, in seconds
 
   wakeSecs := readReg(REG_WAKE_TIME)
+  debug[DBG_VOICE]("voice: getWakeTime ", udec_(wakeSecs))
 
 
-pub setWakeTime(wakeSecs)
+pub setWakeTime(wakeSecs) : status
 
-'' Set the wake-up duration, 0..255 seconds
+'' Set the wake-up duration, 0..255 seconds.  Returns E_OK / E_NAK.
 
   debug[DBG_VOICE]("voice: setWakeTime ", udec_(wakeSecs))
-  writeReg(REG_WAKE_TIME, wakeSecs)
+  status := writeReg(REG_WAKE_TIME, wakeSecs)
 
 
-pub setVolume(volLevel)
+pub setVolume(volLevel) : status
 
-'' Set playback volume.
+'' Set playback volume, and update the volume shadow read back by getVolume().  Returns E_OK / E_NAK.
 '' -- documented range is 1..7 but the true range is wider (F2, confirmed at #9); the value is
 ''    passed through WITHOUT clamping
 
   debug[DBG_VOICE]("voice: setVolume ", udec_(volLevel))
-  writeReg(REG_SET_VOLUME, volLevel)
+  status := writeReg(REG_SET_VOLUME, volLevel)
+  if status == E_OK
+    curVolume := volLevel                                       ' track for getVolume() only if the device took it
 
 
-pub setMuteMode(muteOn)
+pub getVolume() : volLevel
 
-'' Set mute mode -- nonzero MUTEON mutes, 0 unmutes (normalized to 1/0 for the device)
+'' Return the current playback volume.
+'' -- SET_VOLUME is write-only in silicon, so this returns the driver's SHADOW: the value last
+''    written (seeded by DEF_VOLUME at start()).  Accurate as long as all volume changes go through
+''    this driver.
+
+  volLevel := curVolume
+
+
+pub setMuteMode(muteOn) : status
+
+'' Set mute mode -- nonzero MUTEON mutes, 0 unmutes (normalized to 1/0 for the device).  E_OK / E_NAK.
 
   debug[DBG_VOICE]("voice: setMute ", udec_(muteOn))
-  writeReg(REG_SET_MUTE, (muteOn <> 0) & 1)
+  status := writeReg(REG_SET_MUTE, (muteOn <> 0) & 1)
 
 
 '' =================================================================================================
@@ -391,6 +428,7 @@ pub startPoller() : ok | startedCog
     return false                                              ' no free cog
   pollerCogId := startedCog + 1                               ' store cog id + 1 (0 = not running)
   ok := true
+  debug[DBG_VOICE]("voice: startPoller cog=", udec_(startedCog))
 
 
 pub stopPoller()
@@ -401,6 +439,7 @@ pub stopPoller()
     cogstop(pollerCogId - 1)
     pollerCogId := 0
     latestMailbox := 0
+    debug[DBG_VOICE]("voice: stopPoller")
 
 
 pub getLatest() : cmdId
@@ -410,6 +449,8 @@ pub getLatest() : cmdId
 
   cmdId := latestMailbox
   latestMailbox := 0
+  if cmdId                                                     ' trace deliveries, not empty reads
+    debug[DBG_VOICE]("voice: getLatest CMDID=", udec_(cmdId))
 
 
 pri pollerTask() | cmdId

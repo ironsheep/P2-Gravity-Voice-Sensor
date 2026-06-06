@@ -228,3 +228,4 @@ docker-compose.override.yml
 src/tests/recordings/catalog.json
 src/pnut-term-settings.json
 *.bin
+/DOCs/REF-NO-COMMIT

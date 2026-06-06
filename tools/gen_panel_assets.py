@@ -19,7 +19,7 @@ from PIL import Image, ImageDraw, ImageFont
 OUT_DIR = os.path.join(os.path.dirname(__file__), "..", "src")
 
 # ---- window ----
-W, H = 480, 320
+W, H = 480, 412               # grew from 320 to fit the SPEAK row below the HEARD line
 
 # ---- colors ----
 BG        = (28, 28, 34)
@@ -31,6 +31,7 @@ MODE_BTN  = (60, 90, 130)        # mode buttons (blue), normal
 MODE_HI   = (95, 150, 215)       # mode button when selected (brighter blue)
 MODE_RING = (250, 225, 70)       # selected-button outline (amber/yellow)
 ACT_BTN   = (110, 85, 45)        # bring-up buttons (amber)
+PLAY_BTN  = (55, 120, 75)        # SPEAK "play" button (green)
 BTN_TXT   = (240, 240, 240)
 
 # ---- readout boxes (x, y, w, h) ----
@@ -73,6 +74,23 @@ PHRASE_X     = 90                # PLOT pen X where the phrase text starts
 PHRASE_Y     = 284               # PLOT pen Y for the phrase text
 PHRASE_TSIZE = 18                # PLOT TEXTSIZE for the phrase
 PHRASE_CLR   = (86, 276, W - 90, 42)   # erase rect (x, y, w, h): right of the label, full width
+
+# ---- SPEAK row (play any command-word ID): target readout + ID-/ID+/Speak ----
+# "SPEAK" label is baked; the target "<id> <phrase>" is drawn at runtime via PLOT TEXT and
+# erased by crop-blitting this clean strip. Buttons are explicit (Speak is wider).
+SPK_DIV_Y    = 318               # divider above the SPEAK row
+SPK_LABEL_Y  = 326               # baked "SPEAK" label
+SPKTGT_ID_X  = 95                # PLOT pen X for the target ID number
+SPKTGT_PH_X  = 150               # PLOT pen X for the target phrase
+SPKTGT_Y     = 326               # PLOT pen Y for the target line
+SPK_TSIZE    = 18                # PLOT TEXTSIZE for the target line
+SPKTGT_CLR   = (90, 320, W - 94, 26)   # erase rect for the target line
+SPK_ROW_Y    = 356               # SPEAK button row
+SPK_BTNS = [                     # key, label, x, width, color
+    ("SPK_IDDN", "ID -",        15,  105, ACT_BTN),
+    ("SPK_IDUP", "ID +",        130, 105, ACT_BTN),
+    ("SPK_PLAY", "Next phrase", 245, 220, MODE_BTN),   # browse: skip to next real catalog phrase
+]
 
 BUTTONS = [
     ("SYNC",  "Sync",    COLS_X[0], ROW1_Y, MODE_BTN),
@@ -123,6 +141,15 @@ def make_bg():
 
     d.line([(0, PHRASE_DIV_Y), (W, PHRASE_DIV_Y)], fill=(70, 70, 80), width=1)
     d.text((15, HEARD_Y), "HEARD", font=f_label, fill=LABEL)   # phrase is drawn at runtime to its right
+
+    # SPEAK row: divider, label, and the ID-/ID+/Speak buttons (target text drawn at runtime)
+    d.line([(0, SPK_DIV_Y), (W, SPK_DIV_Y)], fill=(70, 70, 80), width=1)
+    d.text((15, SPK_LABEL_Y), "BROWSE", font=f_label, fill=LABEL)
+    for _key, label, x, w, color in SPK_BTNS:
+        d.rounded_rectangle([x, SPK_ROW_Y, x + w, SPK_ROW_Y + BTN_H], radius=8,
+                            fill=color, outline=(20, 20, 24))
+        centered(d, x + w / 2, SPK_ROW_Y + BTN_H / 2, label, f_btn, BTN_TXT)
+
     img.save(os.path.join(OUT_DIR, "panel_bg.bmp"))
 
 def make_font():
@@ -189,6 +216,20 @@ def emit_con():
         print(f"  BTN_{key}_Y1 = {y}")
         print(f"  BTN_{key}_X2 = {x + BTN_W}")
         print(f"  BTN_{key}_Y2 = {y + BTN_H}")
+    print("  ' SPEAK row: target line (PLOT TEXT) + ID-/ID+/Speak hit-zones")
+    print(f"  SPKTGT_ID_X = {SPKTGT_ID_X}")
+    print(f"  SPKTGT_PH_X = {SPKTGT_PH_X}")
+    print(f"  SPKTGT_Y = {SPKTGT_Y}")
+    print(f"  SPK_TSIZE = {SPK_TSIZE}")
+    print(f"  SPKTGT_CLR_X = {SPKTGT_CLR[0]}")
+    print(f"  SPKTGT_CLR_Y = {SPKTGT_CLR[1]}")
+    print(f"  SPKTGT_CLR_W = {SPKTGT_CLR[2]}")
+    print(f"  SPKTGT_CLR_H = {SPKTGT_CLR[3]}")
+    for key, _label, x, w, _c in SPK_BTNS:
+        print(f"  BTN_{key}_X1 = {x}")
+        print(f"  BTN_{key}_Y1 = {SPK_ROW_Y}")
+        print(f"  BTN_{key}_X2 = {x + w}")
+        print(f"  BTN_{key}_Y2 = {SPK_ROW_Y + BTN_H}")
 
 if __name__ == "__main__":
     os.makedirs(OUT_DIR, exist_ok=True)
