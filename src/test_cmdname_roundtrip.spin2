@@ -1,0 +1,156 @@
+'' =================================================================================================
+''
+''   File....... test_cmdname_roundtrip.spin2
+''   Purpose.... Stand-alone, hardware-free round-trip test for the cmdName() lookup mechanism in
+''               isp_voice_command_names: declare an inline CUSTOM-word table (six dog commands),
+''               register it, then DEBUG-display five RANDOM built-in phrases plus every custom
+''               phrase -- proving the whole table-registration + lookup path works end to end.
+''   Author..... Stephen M Moraco
+''               Copyright (c) 2026 Iron Sheep Productions, LLC
+''               -- see end of file for terms of use
+''   E-mail..... stephen@ironsheep.biz
+''   Started.... 07 Jun 2026
+''   Updated.... 07 Jun 2026
+''
+''   Note....... No I2C/sensor needed -- this exercises ONLY the ID -> phrase object. Run under
+''               pnut-term-ts at 2 Mbaud to read the DEBUG lines.
+''
+'' =================================================================================================
+
+
+CON
+
+    _clkfreq   = 200_000_000                                    ' 20 MHz xtal x PLL
+    DEBUG_BAUD = 2_000_000                                      ' MUST match pnut-term-ts -b 2000000
+
+    RAND_BUILTIN_COUNT = 5                                      ' how many random built-ins to show
+    BUILTIN_ID_MAX     = 208                                    ' top of the built-in ID space (200..208)
+
+
+OBJ
+
+    names : "isp_voice_command_names"                           ' object under test (ID -> phrase)
+
+
+DAT ' ---- our custom voice vocabulary: six dog commands (slots 5..10) ----
+
+' Inline custom-word table (the shape documented in DOCs/USER-GUIDE.md). Each entry is one index byte
+' (a custom slot, CMD_CUSTOM_1..CMD_CUSTOM_17 = 5..21) followed by a zero-terminated phrase; a single
+' 0 byte ends the table. On a real build these are the phrases the user trained by voice for the slots.
+dogCustomWords
+            byte    5,  "sit", 0                                ' CMD_CUSTOM_1
+            byte    6,  "stay", 0                               ' CMD_CUSTOM_2
+            byte    7,  "come", 0                               ' CMD_CUSTOM_3
+            byte    8,  "heel", 0                               ' CMD_CUSTOM_4
+            byte    9,  "fetch", 0                              ' CMD_CUSTOM_5
+            byte    10, "roll over", 0                          ' CMD_CUSTOM_6
+            byte    0                                           ' end of table
+
+
+PUB main() | status
+
+'' Run the round-trip: register the dog-command table, then show random built-ins and all customs.
+
+' Local Variables:
+' @local status - REG_* result of registerCustomTable
+
+    debug("== cmdName round-trip test ==")
+
+    ' ---- step 1: register the custom table (one-time validate + register) -------------------------
+    status := names.registerCustomTable(@dogCustomWords)
+    debug("registerCustomTable -> ", sdec_(status))
+    if status <> names.REG_OK
+        debug("  custom table REJECTED -- aborting test")
+        repeat                                                  ' stop here; nothing more is valid
+
+    ' ---- step 2: five RANDOM built-in phrases (proves the built-in lookup path) -------------------
+    showRandomBuiltins()
+
+    ' ---- step 3: every custom phrase we registered (proves the registered lookup path) -----------
+    showAllCustoms()
+
+    debug("== done ==")
+    repeat
+
+
+PRI showRandomBuiltins() | shown, id, pPhrase, seen, attempts
+
+'' Pick and DEBUG-display RAND_BUILTIN_COUNT distinct, real built-in command words at random.
+
+' Local Variables:
+' @local shown - how many real built-ins displayed so far
+' @local id - candidate command-word ID
+' @local pPhrase - cmdName() result for id
+' @local seen - bitmap of low IDs already shown (dup guard; covers 0..31, plenty for our picks)
+' @local attempts - safety cap so a bad ID space can never spin forever
+
+    debug(" ")
+    debug("-- ", udec_(RAND_BUILTIN_COUNT), " random built-in words --")
+    shown := 0
+    seen := 0
+    attempts := 0
+    repeat while shown < RAND_BUILTIN_COUNT
+        attempts++
+        if attempts > 1000
+            debug("  (gave up finding distinct built-ins)")
+            quit
+        id := (GETRND() +// BUILTIN_ID_MAX) + 1                 ' 1..208, unsigned modulo (no bias)
+        if (id >= names.CUSTOM_FIRST) and (id <= names.CUSTOM_LAST)
+            next                                                ' 5..21 are CUSTOM, not built-in -- skip
+        pPhrase := names.cmdName(id)
+        if byte[pPhrase] == "("                                 ' "(none)"/"(unknown)" => gap, not a real word
+            next
+        if (id < 32) and (seen & (1 << id))                     ' already shown this one?
+            next
+        if id < 32
+            seen |= (1 << id)
+        debug("  id=", udec_(id), "  phrase=", zstr_(pPhrase))
+        shown++
+
+
+PRI showAllCustoms() | pScan, id, pPhrase
+
+'' Walk our registered table and DEBUG-display every custom slot's looked-up phrase.
+
+' Local Variables:
+' @local pScan - walking pointer over dogCustomWords
+' @local id - current entry's custom slot ID
+' @local pPhrase - cmdName() result for id (what the library hands back)
+
+    debug(" ")
+    debug("-- all custom words --")
+    pScan := @dogCustomWords
+    repeat while byte[pScan]                                    ' until the 0 end-of-table marker
+        id := byte[pScan]
+        pPhrase := names.cmdName(id)                            ' look it up THROUGH the library, not the DAT
+        debug("  id=", udec_(id), "  phrase=", zstr_(pPhrase))
+        pScan += 1 + strsize(pScan + 1) + 1                     ' advance past index + phrase + terminator
+
+
+CON ' ---- License ----
+{{
+
+ -------------------------------------------------------------------------------------------------
+  MIT License
+
+  Copyright (c) 2026 Iron Sheep Productions, LLC
+
+  Permission is hereby granted, free of charge, to any person obtaining a copy
+  of this software and associated documentation files (the "Software"), to deal
+  in the Software without restriction, including without limitation the rights
+  to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+  copies of the Software, and to permit persons to whom the Software is
+  furnished to do so, subject to the following conditions:
+
+  The above copyright notice and this permission notice shall be included in all
+  copies or substantial portions of the Software.
+
+  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+  IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+  AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+  LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+  SOFTWARE.
+ -------------------------------------------------------------------------------------------------
+}}
