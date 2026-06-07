@@ -11,7 +11,9 @@ object exposing the sensor's built-in command words plus user-trained custom com
 This is a **greenfield port**. The driver source does not exist yet: `src/` and `DOCs/`
 are empty. The work is to reimplement the behavior of the reference Arduino/C++ + Python
 library (in `REF/DFRobot_DF2301Q-master/`) as idiomatic P2 code. Treat `REF/` as the
-protocol specification — read it, don't ship it.
+protocol specification — read it, don't ship it. `REF/` is **gitignored**
+(local-only, absent from a fresh clone), so never cite `REF/` paths in committed
+docs — point at DFRobot's upstream GitHub instead.
 
 ## Build / compile
 
