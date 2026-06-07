@@ -213,9 +213,12 @@ CON ' ---- Status / Error Codes ----
 
   ' Per DOCs/policy/SPIN2-AUTHORING-GUIDE.md: action methods return a status CODE (E_OK = 0,
   ' negative = a specific error), never a bare boolean.  Value queries (getCMDID/getVolume/...) return
-  ' their value; "is it there?" queries (start/startPoller) are boolean-by-nature and return TRUE/FALSE.
+  ' their value; the one "is it there?" query (start) is boolean-by-nature and returns TRUE/FALSE.
+  ' Each cause gets its OWN code so a caller can tell failures apart (guide sec 5.6 -- never merge).
   E_OK            =  0                                          ' success
   E_NAK           = -1                                          ' device did not ACK a bus byte
+  E_ALREADY       = -2                                          ' startPoller: a poller cog is already running
+  E_NO_COG        = -3                                          ' startPoller: no free cog available to launch
 
 
 CON ' ---- Channel-Based DEBUG (Spin2 v46+) ----
@@ -393,20 +396,23 @@ PUB setMuteMode(muteOn) : status
 '   the poller is running -- two cogs on one bus.
 ' =================================================================================================
 
-PUB startPoller() : ok | startedCog
+PUB startPoller() : status | startedCog
 '' Launch a background cog that polls the sensor and publishes the latest CMDID to a mailbox.
 ''
-'' @returns ok - TRUE on success; FALSE if already running or no free cog
+'' @returns status - E_OK on success; E_ALREADY if a poller is already running; E_NO_COG if no free cog
 
 ' Local Variables:
 ' @local startedCog - cog id returned by cogspin (-1 == none free)
 
-  ok := FALSE                                                  ' default: not started
-  if pollerCogId == 0                                          ' not already running
+  if pollerCogId <> 0                                          ' a poller cog is already running
+    status := E_ALREADY
+  else
     startedCog := cogspin(NEWCOG, pollerTask(), @pollerStack)
-    if startedCog <> -1                                        ' got a free cog
+    if startedCog == -1                                        ' no free cog available
+      status := E_NO_COG
+    else
       pollerCogId := startedCog + 1                            ' store cog id + 1 (0 = not running)
-      ok := TRUE
+      status := E_OK
       debug[DBG_VOICE]("voice: startPoller cog=", udec_(startedCog))
 
 
