@@ -9,6 +9,7 @@
 ''               Copyright (c) 2026 Iron Sheep Productions, LLC
 ''   E-mail..... stephen@ironsheep.biz
 ''   Started.... 04 Jun 2026
+''   Updated.... 07 Jun 2026
 ''
 ''   Note....... IDs mirror isp_voice_recognizer's CMD_* constants (both ported from the reference
 ''               DFRobot_DF2301Q_Commands.py). Validate against the product's command-word card (#9).
@@ -16,15 +17,16 @@
 '' =================================================================================================
 
 
-pub null()
+PUB null()
+'' This is not a top-level object.
+''
 
-'' This is not a top-level object
 
-
-pub cmdName(cmdId) : pStr
-
+PUB cmdName(cmdId) : pStr
 '' Return a pointer to the human-readable phrase for a DF2301Q command-word ID.
-'' -- "(none)" for 0, "(custom)" for the user-trained slots 5..21, "(unknown)" for any unmapped ID
+''
+'' @param cmdId - command-word ID to look up
+'' @returns pStr - pointer to the phrase ("(none)" for 0, "(custom)" for slots 5..21, "(unknown)" if unmapped)
 
   case cmdId
     0:   pStr := string("(none)")

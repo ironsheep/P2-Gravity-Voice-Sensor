@@ -9,7 +9,7 @@ discipline, and the I²C layer it rests on. It is distinct from
 device protocol* we ported from. Read the reference doc for what the chip does on the wire; read
 this one for how our object is built.
 
-> **Status: living design doc.** Build 0.1.0 is implemented: `src/isp_voice_recognizer.spin2`
+> **Status: living design doc.** Build 0.2.0 is implemented: `src/isp_voice_recognizer.spin2`
 > (driver), `src/demo_voice_recognizer.spin2` (demo/top), on `src/isp_i2c_singleton.spin2` (bus) —
 > all compile clean under `pnut-ts -d`. Sections marked *(implemented)* are code; *(planned)* are
 > not yet built (the `test_` harness). On-hardware behavior + the F1/F2 values land in task §9.
@@ -102,11 +102,11 @@ The net effect: a scanner pass that includes this device costs **one short I²C 
 ## 5. Public API — as implemented *(implemented)*
 
 The full contract (parameters, returns, blocking, edge semantics) is in
-`DOCs/spec/P2-Gravity-Voice-Sensor-Specification.md` §3. The 14 public methods:
+`DOCs/spec/P2-Gravity-Voice-Sensor-Specification.md` §3. The 15 public methods:
 
 | Method | Blocks? | Notes |
 |---|---|---|
-| `version() : pStr` | no | pointer to the version string (`"0.1.0"`) |
+| `version() : pStr` | no | pointer to the version string (`"0.2.0"`) |
 | `start(scl, sda, khz, pullup) : bFound` | no | init bus (via I²C singleton), probe 0x64, return present/absent |
 | `pollCMDID() : cmdId` | no | scanner entry point: one read or cached, 50 ms spacing by time-check |
 | `getCMDID() : cmdId` | no | alias/simple form for synchronous use |
@@ -115,7 +115,8 @@ The full contract (parameters, returns, blocking, edge semantics) is in
 | `enterWakeState()` | no | wake via the play path (CMDID per F1) |
 | `getWakeTime() : wakeSecs` | no | read reg 0x06 |
 | `setWakeTime(wakeSecs)` | no | write reg 0x06 (0–255) |
-| `setVolume(volLevel)` | no | write reg 0x05 (no hard-clamp — see ref doc finding F2) |
+| `setVolume(volLevel)` | no | write reg 0x05 (no hard-clamp — see ref doc finding F2); updates the volume shadow |
+| `getVolume() : volLevel` | no | return the volume **shadow** (SET_VOLUME is write-only in silicon) |
 | `setMuteMode(muteOn)` | no | write reg 0x04 (normalized to 1/0) |
 | `startPoller() : ok` / `stopPoller()` | no | profile 2: launch/stop the poller cog |
 | `getLatest() : cmdId` | no | profile 2: non-blocking mailbox read, clear-on-read |
@@ -179,7 +180,10 @@ Bit-banged I²C master, adapted from `jm_i2c` as a **singleton**. Key properties
   pull-ups (`P_HIGH_1K5` / `P_HIGH_15K` / etc.). I²C is master-polled by protocol — nothing
   "arrives by itself" on this transport. (UART would be the autonomous-receive transport; out of
   scope here.)
-- **Clock stretching removed** (deliberate, per the object's note — unused by nearly all devices).
+- **Clock stretching is honored** (re-added during bring-up, commit `890aa4b`): `start()`, `stop()`,
+  and `read()` wait (bounded by `STRETCH_LIMIT`) for SCL to actually rise before proceeding. The
+  DF2301Q holds SCL low after an ACK while it prepares read data; without this wait the repeated-START
+  never forms and register reads come back all-zero. This is a hard requirement — see spec §3.2.
 - Timing is `clktix` system ticks per ¼-bit-period, from `setup(..., khz, ...)` (100 / 400 / 1000).
 
 ### 8.1 Public API
@@ -194,26 +198,26 @@ Addresses are **8-bit**: 7-bit ID `0x64` → write `$C8`, read `$C9`.
 ### 8.2 The two DF2301Q core operations on this API
 
 ```
-' writeReg(reg, val)
+' writeReg(regAddr, byteVal)
 i2c.start()
 i2c.write($C8)          ' device write address
-i2c.write(reg)
-i2c.write(val)
+i2c.write(regAddr)
+i2c.write(byteVal)
 i2c.stop()
 
-' readReg(reg) -> val   — uses a REPEATED START (no STOP mid-transaction)
+' readReg(regAddr) -> byteVal   — uses a REPEATED START (no STOP mid-transaction)
 i2c.start()
 i2c.write($C8)          ' write the register pointer
-i2c.write(reg)
+i2c.write(regAddr)
 i2c.start()             ' repeated START — start() raises both lines high first, so this is valid
 i2c.write($C9)          ' device read address
-val := i2c.read(NAK)    ' single byte, NAK on the last byte
+byteVal := i2c.read(NAK)  ' single byte, NAK on the last byte
 i2c.stop()
 ```
 
 The repeated-START (no STOP between the register write and the data read) is mandatory for the
-DF2301Q and is supported by simply calling `start()` again. `begin()` maps to
-`i2c.present($C8)` (+ `stop()`).
+DF2301Q and is supported by simply calling `start()` again. The driver's `start()` maps to
+`i2c.present($C8)` (+ `i2c.stop()`).
 
 ---
 

@@ -11,6 +11,7 @@
 ''               Copyright (c) 2026 Iron Sheep Productions, LLC
 ''   E-mail..... stephen@ironsheep.biz
 ''   Started.... 04 Jun 2026
+''   Updated.... 07 Jun 2026
 ''
 ''   Run........ cd src && pnut-term-ts -r demo_voice_recognizer.bin -b 2000000   (windowed, on host)
 ''
@@ -139,8 +140,15 @@ VAR
 
 
 PUB main() | cmdId, prevLb, lastMx, lastMy, lastLb
+'' Build the panel, init the sensor, then run the click-driven control loop.
+''
 
-'' Build the panel, init the sensor, then run the click-driven control loop
+' Local Variables:
+' @local cmdId - latest recognized command-word ID this poll (0 = none)
+' @local prevLb - left-button state from the previous poll (press-edge detect)
+' @local lastMx - last reported mouse x (change detection)
+' @local lastMy - last reported mouse y (change detection)
+' @local lastLb - last reported left-button state (change detection)
 
   setup()
 
@@ -201,8 +209,8 @@ PUB main() | cmdId, prevLb, lastMx, lastMy, lastLb
 
 
 PRI setup()
-
-'' Create the PLOT window, load the artwork layers, and probe the sensor
+' Create the PLOT window, load the artwork layers, and probe the sensor.
+'
 
   debug(`plot vp title 'DF2301Q Voice' size 480 412 pos 100 100 hidexy update)
   debug(`vp layer 1 'panel_bg.bmp')                            ' background + buttons
@@ -241,9 +249,11 @@ PRI setup()
 
 
 PRI readActive() : cmdId
+' Read the latest command ID using the access path for the current mode (0 = none).
+'
+' @returns cmdId - latest recognized command-word ID, 0 if none
 
-'' Read the latest command ID using the access path for the current mode (0 = none)
-
+  cmdId := 0                                                   ' default: nothing recognized
   case mode
     MODE_SYNC: cmdId := voice.getCMDID()                       ' simple synchronous
     MODE_SCAN: cmdId := voice.pollCMDID()                      ' passive scanner poll
@@ -252,8 +262,10 @@ PRI readActive() : cmdId
 
 
 PRI handleClick(x, y)
-
-'' Map a left-click to a control (bounding-box dispatch)
+' Map a left-click to a control (bounding-box dispatch).
+'
+' @param x - click x coordinate (top-left origin)
+' @param y - click y coordinate (top-left origin)
 
   if inZone(x, y, BTN_SYNC_X1, BTN_SYNC_Y1, BTN_SYNC_X2, BTN_SYNC_Y2)
     setMode(MODE_SYNC)
@@ -304,9 +316,10 @@ PRI handleClick(x, y)
 
 
 PRI handleKey(keyVal)
-
-'' Keyboard type-in for the SPEAK target ID: digits build the number, Backspace deletes a digit,
-'' Enter plays it.  (PC_KEY: digits = ASCII '0'..'9' = 48..57; Backspace = 8; Enter = 13.)
+' Keyboard type-in for the SPEAK target ID: digits build the number, Backspace deletes a digit, Enter plays it.
+' (PC_KEY: digits = ASCII '0'..'9' = 48..57; Backspace = 8; Enter = 13.)
+'
+' @param keyVal - PC_KEY code (ASCII digit, Backspace, or Enter)
 
   if (keyVal >= "0") and (keyVal <= "9")
     speakId := (speakId * 10) + (keyVal - "0")
@@ -321,16 +334,16 @@ PRI handleKey(keyVal)
 
 
 PRI showTarget()
-
-'' BROWSE target changed -- the readout (id + phrase) lives on the TERM's BROWSE line.
+' BROWSE target changed -- the readout (id + phrase) lives on the TERM's BROWSE line.
+'
 
   redrawTerm()
 
 
 PRI skipToNextNamed()
-
-'' BROWSE: advance the target ID to the next command that has a real catalog phrase, skipping the
-'' (none)/(custom)/(unknown) gaps -- those sentinel phrases all begin with "(".
+' BROWSE: advance the target ID to the next command that has a real catalog phrase, skipping the
+' (none)/(custom)/(unknown) gaps -- those sentinel phrases all begin with "(".
+'
 
   repeat
     speakId := (speakId + 1) <# SPK_ID_MAX
@@ -339,13 +352,15 @@ PRI skipToNextNamed()
 
 
 PRI redrawTerm() | pTgt
+' Repaint the docked TERM readout: clear+home, then HEARD / TARGET / SPOKEN.  TERM text is native
+' to this host (unlike PLOT vector TEXT).  Control bytes: 12 = form-feed (clear+home), 13 = newline.
+' Named-TERM output MUST use the CLOSING-backtick form -- debug(`hs <items> `) -- or the items are
+' dumped as raw, unevaluated source.  Avoid literal "(" / ")" in fixed strings (the backtick parser
+' truncates at ")"); runtime zstr_ strings are fine.
+'
 
-'' Repaint the docked TERM readout: clear+home, then HEARD / TARGET / SPOKEN.  TERM text is native
-'' to this host (unlike PLOT vector TEXT).  Control bytes: 12 = form-feed (clear+home), 13 = newline.
-
-'' Named-TERM output MUST use the CLOSING-backtick form -- debug(`hs <items> `) -- or the items are
-'' dumped as raw, unevaluated source.  12 = form-feed (clear+home), 13 = newline.  Avoid literal
-'' "(" / ")" in fixed strings (the backtick parser truncates at ")"); runtime zstr_ strings are fine.
+' Local Variables:
+' @local pTgt - ptr to the catalog phrase for the current BROWSE target ID
 
   pTgt := names.cmdName(speakId)
   debug(`hs 12 'HEARD : ' `udec_(lastHeardId) ' ' `zstr_(lastHeard) ' ' `zstr_(doneStr) 13)
@@ -354,17 +369,18 @@ PRI redrawTerm() | pTgt
 
 
 PRI busAction()
-
-'' A direct-bus action needs the bus; if the poller cog owns it, stop the poller first
-'' (bus-ownership contract -- foreground and poller must not share the bus)
+' A direct-bus action needs the bus; if the poller cog owns it, stop the poller first
+' (bus-ownership contract -- foreground and poller must not share the bus).
+'
 
   if mode == MODE_POLL
     setMode(MODE_IDLE)
 
 
 PRI setMode(newMode)
-
-'' Switch usage profile, starting/stopping the poller cog as needed, and clear the readout
+' Switch usage profile, starting/stopping the poller cog as needed, and clear the readout.
+'
+' @param newMode - usage profile to switch to (MODE_*)
 
   if (mode == MODE_POLL) and (newMode <> MODE_POLL)
     voice.stopPoller()
@@ -376,27 +392,38 @@ PRI setMode(newMode)
   clearCmd()
 
 
-PRI paintModeBtn(m, active) | bx, by, idx
+PRI paintModeBtn(m, active) | bx, by, idx, bKnownMode
+' Show/hide the selected-mode highlight for mode m: blit highlight cell idx from layer 3
+' when active, else restore that button's pixels from the clean background (layer 1).
+'
+' @param m - usage profile whose button to repaint (MODE_*)
+' @param active - nonzero to show the highlight, 0 to restore the clean button
 
-'' Show/hide the selected-mode highlight for mode m: blit highlight cell idx from layer 3
-'' when active, else restore that button's pixels from the clean background (layer 1).
+' Local Variables:
+' @local bx - button top-left x for the selected mode
+' @local by - button top-left y for the selected mode
+' @local idx - highlight cell index in layer 3 for the selected mode
+' @local bKnownMode - TRUE when m matched a real mode (gates the repaint)
 
+  bKnownMode := TRUE                                           ' default: m is a real mode
   case m
     MODE_SYNC: bx, by, idx := BTN_SYNC_X1, BTN_SYNC_Y1, 0
     MODE_SCAN: bx, by, idx := BTN_SCAN_X1, BTN_SCAN_Y1, 1
     MODE_POLL: bx, by, idx := BTN_POLL_X1, BTN_POLL_Y1, 2
     MODE_IDLE: bx, by, idx := BTN_STOP_X1, BTN_STOP_Y1, 3
-    other:     return
-  if active
-    debug(`vp crop 3 `(idx * BTN_W, 0, BTN_W, BTN_H, bx, by))
-  else
-    debug(`vp crop 1 `(bx, by, BTN_W, BTN_H, bx, by))
-  dirty := true
+    other:     bKnownMode := FALSE
+  if bKnownMode
+    if active
+      debug(`vp crop 3 `(idx * BTN_W, 0, BTN_W, BTN_H, bx, by))
+    else
+      debug(`vp crop 1 `(bx, by, BTN_W, BTN_H, bx, by))
+    dirty := true
 
 
 PRI showCmd(numVal)
-
-'' Blit a recognized CMDID (right-aligned, leading blanks) into the CMD-ID box
+' Blit a recognized CMDID (right-aligned, leading blanks) into the CMD-ID box.
+'
+' @param numVal - command ID value to display
 
   blitDigit(CMD_X2, CMD_Y, numVal // 10)
   if numVal >= 10
@@ -411,8 +438,8 @@ PRI showCmd(numVal)
 
 
 PRI clearCmd()
-
-'' Blank the CMD-ID box (all three digit slots) and the recognized-phrase line
+' Blank the CMD-ID box (all three digit slots) and the recognized-phrase line.
+'
 
   blitDigit(CMD_X0, CMD_Y, BLANK_CELL)
   blitDigit(CMD_X1, CMD_Y, BLANK_CELL)
@@ -422,9 +449,10 @@ PRI clearCmd()
 
 
 PRI showPhrase(pStr)
-
-'' Draw the recognized phrase (zero-terminated string at pStr) on the HEARD line.
-'' Erase the prior phrase first by repainting that strip from the clean background (layer 1).
+' Draw the recognized phrase (zero-terminated string at pStr) on the HEARD line.
+' Erase the prior phrase first by repainting that strip from the clean background (layer 1).
+'
+' @param pStr - pointer to the zero-terminated phrase to draw
 
   clearPhrase()
   debug(`vp set `(PHRASE_X) `(PHRASE_Y) color green textsize `(PHRASE_TSIZE) text '`zstr_(pStr)')
@@ -432,16 +460,16 @@ PRI showPhrase(pStr)
 
 
 PRI clearPhrase()
-
-'' Repaint the phrase strip from the clean background, erasing any prior phrase text
+' Repaint the phrase strip from the clean background, erasing any prior phrase text.
+'
 
   debug(`vp crop 1 `(PHRASE_CLR_X, PHRASE_CLR_Y, PHRASE_CLR_W, PHRASE_CLR_H, PHRASE_CLR_X, PHRASE_CLR_Y))
   dirty := true
 
 
 PRI clearVol()
-
-'' Blank the VOLUME box -- used at startup when the module-retained volume is unknown
+' Blank the VOLUME box -- used at startup when the module-retained volume is unknown.
+'
 
   blitDigit(VOL_X0, VOL_Y, BLANK_CELL)
   blitDigit(VOL_X1, VOL_Y, BLANK_CELL)
@@ -449,32 +477,71 @@ PRI clearVol()
 
 
 PRI showVol(numVal)
-
-'' Blit the current volume (right-aligned, leading blank) into the VOLUME box,
-'' or the mute glyph when muted (numVal is preserved so unmute restores the number)
+' Blit the current volume (right-aligned, leading blank) into the VOLUME box,
+' or the mute glyph when muted (numVal is preserved so unmute restores the number).
+'
+' @param numVal - volume value to display (preserved across mute)
 
   if muteOn
     blitDigit(VOL_X0, VOL_Y, BLANK_CELL)
     blitDigit(VOL_X1, VOL_Y, MUTE_CELL)
-    dirty := true
-    return
-  if numVal >= 10
-    blitDigit(VOL_X0, VOL_Y, numVal / 10 // 10)
   else
-    blitDigit(VOL_X0, VOL_Y, BLANK_CELL)
-  blitDigit(VOL_X1, VOL_Y, numVal // 10)
+    if numVal >= 10
+      blitDigit(VOL_X0, VOL_Y, numVal / 10 // 10)
+    else
+      blitDigit(VOL_X0, VOL_Y, BLANK_CELL)
+    blitDigit(VOL_X1, VOL_Y, numVal // 10)
   dirty := true
 
 
 PRI blitDigit(destX, destY, cell)
-
-'' Copy one font cell (digit 0-9 or BLANK_CELL) from layer 2 to (destX, destY)
+' Copy one font cell (digit 0-9 or BLANK_CELL) from layer 2 to (destX, destY).
+'
+' @param destX - destination x for the font cell
+' @param destY - destination y for the font cell
+' @param cell - font cell index (digit 0-9, BLANK_CELL, or MUTE_CELL)
 
   debug(`vp crop 2 `(cell * DIGIT_W, 0, DIGIT_W, DIGIT_H, destX, destY))
 
 
 PRI inZone(x, y, x1, y1, x2, y2) : hit
-
-'' Bounding-box hit test (top-left coordinate basis)
+' Bounding-box hit test (top-left coordinate basis).
+'
+' @param x - point x coordinate to test
+' @param y - point y coordinate to test
+' @param x1 - zone left edge (inclusive)
+' @param y1 - zone top edge (inclusive)
+' @param x2 - zone right edge (exclusive)
+' @param y2 - zone bottom edge (exclusive)
+' @returns hit - TRUE if (x, y) lies within the zone, FALSE otherwise
 
   hit := (x >= x1) and (x < x2) and (y >= y1) and (y < y2)
+
+
+CON ' ---- License ----
+
+{{
+ -------------------------------------------------------------------------------------------------
+  MIT License
+
+  Copyright (c) 2026 Iron Sheep Productions, LLC
+
+  Permission is hereby granted, free of charge, to any person obtaining a copy
+  of this software and associated documentation files (the "Software"), to deal
+  in the Software without restriction, including without limitation the rights
+  to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+  copies of the Software, and to permit persons to whom the Software is
+  furnished to do so, subject to the following conditions:
+
+  The above copyright notice and this permission notice shall be included in all
+  copies or substantial portions of the Software.
+
+  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+  IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+  AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+  LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+  SOFTWARE.
+ =================================================================================================
+}}

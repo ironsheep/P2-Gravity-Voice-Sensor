@@ -8,17 +8,20 @@
 ''               -- see below for terms of use
 ''   E-mail..... stephen@ironsheep.biz
 ''   Started.... 28 Jun 2021
-''   Updated.... 14 Aug 2021
+''   Updated.... 07 Jun 2026
 ''
 '' =================================================================================================
 
 ' Note: The pin modes drive the high output through a resistor; this simulates the use of a pull-up
 '       on the pin.
 '
-' Note: Support for clock-stretching removed due to lack of use in nearly all devices
+' Note: Clock-stretching IS honored (re-added 2026, commit 890aa4b): start(), stop(), and read()
+'       wait (bounded by STRETCH_LIMIT) for SCL to actually rise before proceeding. The DF2301Q holds
+'       SCL low after an ACK while it prepares read data; without this the repeated-START malforms and
+'       register reads return all-zero.
 
 
-con { fixed io pins }
+CON ' ---- Fixed I/O Pins ----
 
   RX1      = 63  { I }                                          ' programming / debug
   TX1      = 62  { O }
@@ -29,10 +32,15 @@ con { fixed io pins }
   SF_SDI   = 58  { I }
 
 
-con
+CON ' ---- Public Bus Selectors ----
 
+  {Spin2_Doc_CON}
+  ' Pull-up and ACK/NAK selectors callers pass through the object prefix (i2c.PU_NONE, i2c.NAK, ...).
   #0, PU_NONE, PU_1K5, PU_3K3, PU_15K                           ' pull-up options
   #0, ACK, NAK
+
+
+CON ' ---- Internal Bit-Bang Constants ----
 
   STRETCH_LIMIT = 4_000_000                                     ' max clock-stretch spin iterations in read() (~tens of ms) before giving up
 
@@ -40,7 +48,7 @@ con
 
   MAX_LOG_ENTRIES = 30
 
-  ' ---- channel-based DEBUG (Spin2 v46+) ----------------------------------------------------------
+  ' channel-based DEBUG (Spin2 v46+):
   ' DEBUG_MASK chooses which DEBUG[n]() channels are COMPILED. A clear bit emits no code at all, so
   ' the shipped default (0) has zero overhead. The bus trace is buffered cheaply by record() during a
   ' transaction and only printed by report() at stop(), so DEBUG never sits in the timing-critical
@@ -50,7 +58,8 @@ con
   DEBUG_MASK    = 0                                             ' ship default: all channels off
   I2C_DEBUG     = (DEBUG_MASK >> DBG_I2C) & 1                   ' 1 when the DBG_I2C channel is enabled
 
-DAT
+DAT ' ---- Singleton Bus State ----
+
     ' following 3 LONGs must stay in this position relative to each other!
 sclpin        long      0                               ' i2c bus pins
 sdapin        long      0
@@ -62,43 +71,22 @@ dbgStretchTO  long      0                               ' bring-up: 1 if the las
 logBytes      WORD      0[MAX_LOG_ENTRIES]
 entryCount    WORD      0
 
-pub null()
-
+PUB null()
 '' This is not a top-level object
+''
 
-PRI record(mode, value)
-    if I2C_DEBUG
-        if entryCount < MAX_LOG_ENTRIES - 1
-            WORD [@logBytes][entryCount] := (mode & $ff) << 8 | (value & $ff)
-            entryCount++
 
-PRI report() | bytIndex, mode, value
-    if I2C_DEBUG
-        if entryCount > 0
-            repeat bytIndex from 0 to entryCount - 1
-                mode := WORD [@logBytes][bytIndex] >> 8
-                value := WORD [@logBytes][bytIndex] & $ff
-                case mode
-                    MK_START:
-                        debug[DBG_I2C]("  start()")
-                    MK_WRITE:
-                        debug[DBG_I2C]("  write(0x", uhex_byte_(value), ")")
-                    MK_READ:
-                        debug[DBG_I2C]("  read(0x", uhex_byte_(value), ")")
-                    MK_STOP:
-                        debug[DBG_I2C]("  stop()")
-                    MK_SCL:
-                        debug[DBG_I2C]("  SCL=", udec_(value))
-                    MK_SDA:
-                        debug[DBG_I2C]("  SDA=", udec_(value))
-                    other:
-                        debug[DBG_I2C]("  {unknown??}")
-            entryCount := 0
+PUB quiesce(pScl, pSda, pullup) | scl, sda
+'' Configure the I2C SCL (clock) and SDA (data) pins and drive the clock low.
+''
+'' @param pScl - SCL (clock) pin number
+'' @param pSda - SDA (data) pin number
+'' @param pullup - high-level drive configuration: PU_NONE / PU_1K5 / PU_3K3 / PU_15K
 
-pub quiesce(pScl, pSda, pullup) | scl, sda
+' Local Variables:
+' @local scl - working copy of the SCL pin for inline PASM
+' @local sda - working copy of the SDA pin
 
-'' Define I2C SCL (clock) and SDA (data) pins
-'' -- pullup controls high level drive configuration of SCL and SDA
   sdapin := pSda
   sclpin := pScl
 
@@ -118,14 +106,20 @@ pub quiesce(pScl, pSda, pullup) | scl, sda
   end
 
 
-pub setup(pScl, pSda, khz, pullup) | scl, sda, tix
+PUB setup(pScl, pSda, khz, pullup) | scl, sda, tix
+'' Configure the I2C SCL/SDA pins and bus speed, then clear the bus if SDA is stuck low.
+''
+'' @param pScl - SCL (clock) pin number
+'' @param pSda - SDA (data) pin number
+'' @param khz - bus frequency: 100 (standard), 400 (full), 1000 (fast); circuit/connections will affect maximum bus speed
+'' @param pullup - high-level drive configuration: PU_NONE / PU_1K5 / PU_3K3 / PU_15K
+
+' Local Variables:
+' @local scl - working copy of the SCL pin for inline PASM
+' @local sda - working copy of the SDA pin for inline PASM
+' @local tix - system ticks in 1/4 bus period for inline PASM
 
   entryCount := 0
-
-'' Define I2C SCL (clock) and SDA (data) pins
-'' -- khz is bus frequency: 100 (standard), 400 (full), 1000 (fast)
-''    * circuit/connections will affect maximum bus speed
-'' -- pullup controls high level drive configuration of SCL and SDA
 
   clktix := tix := (clkfreq / (khz * 1_000)) >> 2               ' calculate ticks in 1/4 period
   sdapin := pSda
@@ -164,19 +158,24 @@ pub setup(pScl, pSda, khz, pullup) | scl, sda, tix
   end
 
 
-pub present(devid) : result
+PUB present(devid) : bPresent
+'' Ping a device and report whether it acknowledges its address on the bus.
+''
+'' @param devid - 8-bit I2C write address of the device to ping
+'' @returns bPresent - TRUE if the device ACKs its address, FALSE otherwise
 
-'' Pings device, returns true if device on bus.
-
+  bPresent := FALSE                                            ' default: device not present
   start()
+  bPresent := (write(devid) == ACK)
 
-  result := (write(devid) == ACK)
 
+PUB wait(devid) | ackbit
+'' Wait for a device to be ready for a new command (use present() to detect the device first).
+''
+'' @param devid - 8-bit I2C write address of the device to wait on
 
-pub wait(devid) | ackbit
-
-'' Waits for device to be ready for new command.
-'' -- Note: Use present() to detect device before using wait()
+' Local Variables:
+' @local ackbit - ACK bit from the most recent address write (ACK ends the wait)
 
   repeat
     start()
@@ -184,13 +183,19 @@ pub wait(devid) | ackbit
   until (ackbit == ACK)
 
 
-pub start() | scl, sda, tix, tmo
+PUB start() | scl, sda, tix, tmo
+'' Create an I2C (or repeated-) START sequence, honoring clock-stretching.
+''
+'' Honors clock-stretching: after releasing SCL high, waits (bounded) until SCL actually reads
+'' high before forming the START.  Critical for the repeated-START of a register read: the
+'' DF2301Q holds SCL low after the register-pointer write, so without this wait the START
+'' condition never forms and the read half never reaches the bus.
 
-'' Create I2C (or repeated-) start sequence
-'' -- honors clock-stretching: after releasing SCL high, waits (bounded) until SCL actually reads
-''    high before forming the START.  Critical for the repeated-START of a register read: the
-''    DF2301Q holds SCL low after the register-pointer write, so without this wait the START
-''    condition never forms and the read half never reaches the bus.
+' Local Variables:
+' @local scl - working copy of the SCL pin for inline PASM
+' @local sda - working copy of the SDA pin for inline PASM
+' @local tix - system ticks in 1/4 bus period for inline PASM
+' @local tmo - clock-stretch spin-down counter for inline PASM
 
   scl := sclpin
   sda := sdapin
@@ -213,11 +218,18 @@ pub start() | scl, sda, tix, tmo
                 waitx     tix
   end
 
-pub write(i2cbyte) : ackbit | scl, sda, tix
+PUB write(i2cbyte) : ackbit | scl, sda, tix
+'' Write one byte to the I2C bus and return the device ACK bit (leaves SCL low).
+''
+'' @param i2cbyte - byte to shift out, MSB first
+'' @returns ackbit - 0 (ACK) if the device acknowledged, nonzero (NAK) if not
 
-'' Write byte to I2C bus
-'' -- leaves SCL low
+' Local Variables:
+' @local scl - working copy of the SCL pin for inline PASM
+' @local sda - working copy of the SDA pin for inline PASM
+' @local tix - system ticks in 1/4 bus period for inline PASM
 
+  ackbit := 0                                                  ' default: ACK (cleared before PASM samples it)
   'longmove(@scl, @sclpin, 2)
   scl := sclpin
   sda := sdapin
@@ -250,12 +262,20 @@ pub write(i2cbyte) : ackbit | scl, sda, tix
   end
 
 
-pub wr_block(p_block, count) : ackbit | i2cbyte, scl, sda, tix
+PUB wr_block(p_block, count) : ackbit | i2cbyte, scl, sda, tix
+'' Write count bytes from p_block to the I2C bus, returning the OR of the per-byte ACK bits (leaves SCL low).
+''
+'' @param p_block - pointer to the bytes to write
+'' @param count - number of bytes to write
+'' @returns ackbit - 0 if every byte was ACKed, nonzero if any byte was NAKed
 
-'' Write count bytes from p_block to I2C bus
-'' -- p_block is pointer to bytes
-'' -- leaves SCL low
+' Local Variables:
+' @local i2cbyte - byte fetched from p_block and shifted out in inline PASM
+' @local scl - working copy of the SCL pin for inline PASM
+' @local sda - working copy of the SDA pin for inline PASM
+' @local tix - system ticks in 1/4 bus period for inline PASM
 
+  ackbit := 0                                                  ' default: ACK (OR-accumulated in PASM)
   'longmove(@scl, @sclpin, 2)
   scl := sclpin
   sda := sdapin
@@ -291,13 +311,23 @@ pub wr_block(p_block, count) : ackbit | i2cbyte, scl, sda, tix
   end
 
 
-pub read(ackbit) : i2cbyte | scl, sda, tix, cnt, tmo
+PUB read(ackbit) : i2cbyte | scl, sda, tix, cnt, tmo
+'' Read one byte from the I2C bus, sending ackbit as the ACK/NAK after the byte.
+''
+'' Honors clock-stretch: per data bit, release SCL then wait (bounded) for it to actually rise
+'' before sampling.  The DF2301Q holds SCL low while it produces read data.
+''
+'' @param ackbit - state of the ACK bit to send (usually NAK for the last byte read)
+'' @returns i2cbyte - the byte read from the bus
 
-'' Read byte from I2C bus
-'' -- ackbit is state of ack bit (usually NAK for last byte read)
-'' -- honors clock-stretch: per data bit, release SCL then wait (bounded) for it to actually rise
-''    before sampling.  The DF2301Q holds SCL low while it produces read data.
+' Local Variables:
+' @local scl - working copy of the SCL pin for inline PASM
+' @local sda - working copy of the SDA pin for inline PASM
+' @local tix - system ticks in 1/4 bus period for inline PASM
+' @local cnt - bit counter for the 8-bit read loop in inline PASM
+' @local tmo - clock-stretch spin-down counter for inline PASM
 
+  i2cbyte := 0                                                 ' default: cleared before PASM shifts bits in
   'longmove(@scl, @sclpin, 2)
   scl := sclpin
   sda := sdapin
@@ -335,11 +365,18 @@ pub read(ackbit) : i2cbyte | scl, sda, tix, cnt, tmo
   record(MK_READ, i2cbyte)
 
 
-pub rd_block(p_block, count, ackbit) | i2cbyte, scl, sda, tix
+PUB rd_block(p_block, count, ackbit) | i2cbyte, scl, sda, tix
+'' Read count bytes from the I2C bus into p_block, ACKing all but the final byte (which uses ackbit).
+''
+'' @param p_block - pointer to the storage location for the bytes read
+'' @param count - number of bytes to read
+'' @param ackbit - state of the ACK bit to send after the final byte
 
-'' Read count bytes from I2C bus
-'' -- p_block is pointer to storage location for bytes
-'' -- ackbit is state of ack for final byte read
+' Local Variables:
+' @local i2cbyte - byte assembled in inline PASM and stored to p_block
+' @local scl - working copy of the SCL pin for inline PASM
+' @local sda - working copy of the SDA pin for inline PASM
+' @local tix - system ticks in 1/4 bus period for inline PASM
 
   'longmove(@scl, @sclpin, 2)
   scl := sclpin
@@ -381,11 +418,17 @@ pub rd_block(p_block, count, ackbit) | i2cbyte, scl, sda, tix
   end
 
 
-pub stop() | scl, sda, tix, tmo
+PUB stop() | scl, sda, tix, tmo
+'' Create an I2C STOP sequence, honoring clock-stretching.
+''
+'' Honors clock-stretch: waits (bounded) for SCL to actually rise before raising SDA, so the
+'' STOP condition forms even when the slave is holding SCL low after the final ACK.
 
-'' Create I2C stop sequence
-'' -- honors clock-stretch: waits (bounded) for SCL to actually rise before raising SDA, so the
-''    STOP condition forms even when the slave is holding SCL low after the final ACK
+' Local Variables:
+' @local scl - working copy of the SCL pin for inline PASM
+' @local sda - working copy of the SDA pin for inline PASM
+' @local tix - system ticks in 1/4 bus period for inline PASM
+' @local tmo - clock-stretch spin-down counter for inline PASM
 
   scl := sclpin
   sda := sdapin
@@ -406,7 +449,51 @@ pub stop() | scl, sda, tix, tmo
   report()
 
 
-CON { license }
+PRI record(mode, byteVal)
+' Buffer one bus-trace entry (mode + byteVal) for later emission by report() at stop().
+'
+' @param mode - trace marker (MK_START / MK_WRITE / MK_READ / MK_STOP / MK_SCL / MK_SDA)
+' @param byteVal - byte value associated with the marker
+
+    if I2C_DEBUG
+        if entryCount < MAX_LOG_ENTRIES - 1
+            WORD [@logBytes][entryCount] := (mode & $ff) << 8 | (byteVal & $ff)
+            entryCount++
+
+
+PRI report() | bytIndex, mode, byteVal
+' Emit all buffered bus-trace entries to the DBG_I2C channel, then clear the buffer.
+'
+
+' Local Variables:
+' @local bytIndex - index into the buffered trace-entry table
+' @local mode - trace marker decoded from the buffered entry
+' @local byteVal - byte value decoded from the buffered entry
+
+    if I2C_DEBUG
+        if entryCount > 0
+            repeat bytIndex from 0 to entryCount - 1
+                mode := WORD [@logBytes][bytIndex] >> 8
+                byteVal := WORD [@logBytes][bytIndex] & $ff
+                case mode
+                    MK_START:
+                        debug[DBG_I2C]("  start()")
+                    MK_WRITE:
+                        debug[DBG_I2C]("  write(0x", uhex_byte_(byteVal), ")")
+                    MK_READ:
+                        debug[DBG_I2C]("  read(0x", uhex_byte_(byteVal), ")")
+                    MK_STOP:
+                        debug[DBG_I2C]("  stop()")
+                    MK_SCL:
+                        debug[DBG_I2C]("  SCL=", udec_(byteVal))
+                    MK_SDA:
+                        debug[DBG_I2C]("  SDA=", udec_(byteVal))
+                    other:
+                        debug[DBG_I2C]("  {unknown??}")
+            entryCount := 0
+
+
+CON ' ---- License ----
 
 {{
  -------------------------------------------------------------------------------------------------
