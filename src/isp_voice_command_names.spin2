@@ -1,20 +1,48 @@
 '' =================================================================================================
 ''
 ''   File....... isp_voice_command_names.spin2
-''   Purpose.... OPTIONAL human-readable phrase lookup for DF2301Q command-word IDs.
-''               Include this object only when you want the phrase strings (e.g. to print the
-''               recognized command); it adds the string table to the binary. Apps that only need
-''               to react by ID use the CMD_* constants in isp_voice_recognizer (which are free).
+''   Purpose.... OPTIONAL human-readable phrase lookup for DF2301Q command-word IDs, plus an
+''               application registration API for the 17 user-trained CUSTOM words (IDs 5..21).
+''               Include this object only when you want phrase strings (e.g. to print the recognized
+''               command); it adds the string table to the binary. Apps that only need to react by
+''               ID use the CMD_* constants in isp_voice_recognizer (which are free).
 ''   Author..... Stephen M Moraco
 ''               Copyright (c) 2026 Iron Sheep Productions, LLC
+''               -- see end of file for terms of use
 ''   E-mail..... stephen@ironsheep.biz
 ''   Started.... 04 Jun 2026
 ''   Updated.... 07 Jun 2026
 ''
-''   Note....... IDs mirror isp_voice_recognizer's CMD_* constants (both ported from the reference
-''               DFRobot_DF2301Q_Commands.py). Validate against the product's command-word card (#9).
+''   Note....... Built-in IDs/phrases mirror isp_voice_recognizer's CMD_* constants (both ported from
+''               the DFRobot reference DFRobot_DF2301Q_Commands.py). Validate against the product's
+''               command-word card (#9). The built-in table below is GENERATED -- see the markers.
 ''
 '' =================================================================================================
+
+
+CON ' ---- Custom Command-Word Registration ----
+
+  ' The device trains custom words BY VOICE and only ever reports their slot ID (5..21); it stores no
+  ' text. So the application is the sole source of truth for what each custom slot means. An app
+  ' declares its custom vocabulary as an inline table and registers it once (registerCustomTable);
+  ' cmdName() then returns the registered phrase for those IDs. See DOCs/USER-GUIDE.md for the
+  ' copy-paste table exemplar.
+  CUSTOM_FIRST  = 5                                            ' = CMD_CUSTOM_1  in isp_voice_recognizer
+  CUSTOM_LAST   = 21                                           ' = CMD_CUSTOM_17 in isp_voice_recognizer
+  CUSTOM_COUNT  = 17                                           ' number of custom slots
+  CUSTOM_MAXLEN = 63                                           ' longest custom phrase accepted (terminator-scan bound)
+
+  ' registerCustomTable() result / reason codes
+  REG_OK             =  0                                      ' table validated and registered
+  REG_E_INDEX        = -1                                      ' an entry's index byte is outside CUSTOM_FIRST..CUSTOM_LAST
+  REG_E_UNTERMINATED = -2                                      ' an entry's phrase had no 0 within CUSTOM_MAXLEN bytes
+  REG_E_TOO_MANY     = -3                                      ' more than CUSTOM_COUNT entries before the end marker
+  REG_E_DUP          = -4                                      ' the same custom index appears more than once
+
+
+VAR ' per-instance custom-word registry
+
+  long  customPtr[CUSTOM_COUNT]                                ' absolute ptr to each slot's phrase (0 = unregistered)
 
 
 PUB null()
@@ -22,144 +50,418 @@ PUB null()
 ''
 
 
+PUB registerCustomTable(pTable) : status | pScan, slot, nLen, count, seen
+'' Validate an application's inline custom-word table and register it (one-time analysis).
+''
+'' Table format -- build it in your DAT and pass @yourTable (copy the exemplar in DOCs/USER-GUIDE.md):
+'' each entry is one index byte (a custom slot, CUSTOM_FIRST..CUSTOM_LAST) followed immediately by a
+'' zero-terminated phrase; a single 0 index byte ends the table. Phrases are variable length and may
+'' be multi-word. Nothing is registered unless the WHOLE table validates (all-or-nothing).
+''
+'' @param pTable - pointer to the application's inline custom-word table
+'' @returns status - REG_OK, or a negative REG_E_* reason code (nothing registered on reject)
+
+' Local Variables:
+' @local pScan - walking pointer over the table
+' @local slot - current entry's index byte
+' @local nLen - measured (bounded) phrase length
+' @local count - entries validated so far
+' @local seen - bitmap of slots already used (duplicate detection)
+
+  status := REG_OK
+  pScan := pTable
+  count := 0
+  seen := 0
+  repeat
+    slot := byte[pScan]
+    if slot == 0
+      quit                                                     ' end-of-table marker
+    if (slot < CUSTOM_FIRST) or (slot > CUSTOM_LAST)
+      status := REG_E_INDEX
+      quit
+    if seen & (1 << (slot - CUSTOM_FIRST))
+      status := REG_E_DUP
+      quit
+    nLen := boundedLen(pScan + 1, CUSTOM_MAXLEN)
+    if nLen < 0
+      status := REG_E_UNTERMINATED
+      quit
+    seen |= (1 << (slot - CUSTOM_FIRST))
+    count++
+    if count > CUSTOM_COUNT
+      status := REG_E_TOO_MANY
+      quit
+    pScan += 1 + nLen + 1                                       ' advance past index + phrase + terminator
+  if status == REG_OK                                          ' commit only when the whole table is clean
+    longfill(@customPtr, 0, CUSTOM_COUNT)
+    pScan := pTable
+    repeat while byte[pScan]
+      slot := byte[pScan]
+      customPtr[slot - CUSTOM_FIRST] := pScan + 1              ' absolute ptr (pTable was absolute)
+      pScan += 1 + strsize(pScan + 1) + 1
+
+
+PUB clearCustomWords()
+'' Forget all registered custom phrases; cmdName() reverts to "(custom)" for IDs 5..21.
+''
+
+  longfill(@customPtr, 0, CUSTOM_COUNT)
+
+
+' >>> GENERATED cmd-name table (tools/gen_cmdname_table.py --apply from tools/cmdname_catalog.tsv) -- do not hand-edit
+
 PUB cmdName(cmdId) : pStr
-'' Return a pointer to the human-readable phrase for a DF2301Q command-word ID.
+'' Return a pointer to the human-readable phrase for a command-word ID (dense indexed table).
 ''
 '' @param cmdId - command-word ID to look up
-'' @returns pStr - pointer to the phrase ("(none)" for 0, "(custom)" for slots 5..21, "(unknown)" if unmapped)
+'' @returns pStr - pointer to the phrase ((none) for 0, registered/(custom) for 5..21, (unknown) if unmapped)
 
+  pStr := @nm_unknown                                          ' default: ID-space gaps and out-of-range
   case cmdId
-    0:   pStr := string("(none)")
-    1:   pStr := string("Wake-up Words For Learning")
-    2:   pStr := string("Hello Robot")
-    5..21: pStr := string("(custom)")
-    22:  pStr := string("Go Forward")
-    23:  pStr := string("Retreat")
-    24:  pStr := string("Park A Car")
-    25:  pStr := string("Turn Left 90 Degrees")
-    26:  pStr := string("Turn Left 45 Degrees")
-    27:  pStr := string("Turn Left 30 Degrees")
-    29:  pStr := string("Turn Right 45 Degrees")
-    30:  pStr := string("Turn Right 30 Degrees")
-    31:  pStr := string("Shift Down A Gear")
-    32:  pStr := string("Line Tracking Mode")
-    33:  pStr := string("Light Tracking Mode")
-    34:  pStr := string("Bluetooth Mode")
-    35:  pStr := string("Obstacle Avoidance Mode")
-    36:  pStr := string("Face Recognition")
-    37:  pStr := string("Object Tracking")
-    38:  pStr := string("Object Recognition")
-    39:  pStr := string("Line Tracking")
-    40:  pStr := string("Color Recognition")
-    41:  pStr := string("Tag Recognition")
-    42:  pStr := string("Object Sorting")
-    43:  pStr := string("QR Code Recognition")
-    44:  pStr := string("General Settings")
-    45:  pStr := string("Clear Screen")
-    46:  pStr := string("Learn Once")
-    47:  pStr := string("Forget")
-    48:  pStr := string("Load Model")
-    49:  pStr := string("Save Model")
-    50:  pStr := string("Take Photos And Save Them")
-    51:  pStr := string("Save And Return")
-    52:  pStr := string("Display Number Zero")
-    53:  pStr := string("Display Number One")
-    54:  pStr := string("Display Number Two")
-    55:  pStr := string("Display Number Three")
-    56:  pStr := string("Display Number Four")
-    57:  pStr := string("Display Number Five")
-    58:  pStr := string("Display Number Six")
-    59:  pStr := string("Display Number Seven")
-    60:  pStr := string("Display Number Eight")
-    61:  pStr := string("Display Number Nine")
-    62:  pStr := string("Display Smiley Face")
-    63:  pStr := string("Display Crying Face")
-    64:  pStr := string("Display Heart")
-    65:  pStr := string("Turn Off Dot Matrix")
-    66:  pStr := string("Read Current Posture")
-    67:  pStr := string("Read Ambient Light")
-    68:  pStr := string("Read Compass")
-    69:  pStr := string("Read Temperature")
-    70:  pStr := string("Read Acceleration")
-    71:  pStr := string("Reading Sound Intensity")
-    72:  pStr := string("Calibrate Electronic Gyroscope")
-    73:  pStr := string("Turn On The Camera")
-    74:  pStr := string("Turn Off The Camera")
-    75:  pStr := string("Turn On The Fan")
-    76:  pStr := string("Turn Off The Fan")
-    77:  pStr := string("Turn Fan Speed To Gear One")
-    78:  pStr := string("Turn Fan Speed To Gear Two")
-    79:  pStr := string("Turn Fan Speed To Gear Three")
-    80:  pStr := string("Start Oscillating")
-    81:  pStr := string("Stop Oscillating")
-    82:  pStr := string("Reset")
-    83:  pStr := string("Set Servo To 10 Degrees")
-    84:  pStr := string("Set Servo To 30 Degrees")
-    85:  pStr := string("Set Servo To 45 Degrees")
-    86:  pStr := string("Set Servo To 60 Degrees")
-    87:  pStr := string("Set Servo To 90 Degrees")
-    88:  pStr := string("Turn On The Buzzer")
-    89:  pStr := string("Turn Off The Buzzer")
-    90:  pStr := string("Turn On The Speaker")
-    91:  pStr := string("Turn Off The Speaker")
-    92:  pStr := string("Play Music")
-    93:  pStr := string("Stop Playing")
-    94:  pStr := string("The Last Track")
-    95:  pStr := string("The Next Track")
-    96:  pStr := string("Repeat This Track")
-    97:  pStr := string("Volume Up")
-    98:  pStr := string("Volume Down")
-    99:  pStr := string("Change Volume To Maximum")
-    100: pStr := string("Change Volume To Minimum")
-    101: pStr := string("Change Volume To Medium")
-    102: pStr := string("Play Poem")
-    103: pStr := string("Turn On The Light")
-    104: pStr := string("Turn Off The Light")
-    105: pStr := string("Brighten The Light")
-    106: pStr := string("Dim The Light")
-    107: pStr := string("Adjust Brightness To Maximum")
-    108: pStr := string("Adjust Brightness To Minimum")
-    109: pStr := string("Increase Color Temperature")
-    110: pStr := string("Decrease Color Temperature")
-    111: pStr := string("Adjust Color Temperature To Maximum")
-    112: pStr := string("Adjust Color Temperature To Minimum")
-    113: pStr := string("Daylight Mode")
-    114: pStr := string("Moonlight Mode")
-    115: pStr := string("Color Mode")
-    116: pStr := string("Set To Red")
-    117: pStr := string("Set To Orange")
-    118: pStr := string("Set To Yellow")
-    119: pStr := string("Set To Green")
-    120: pStr := string("Set To Cyan")
-    121: pStr := string("Set To Blue")
-    122: pStr := string("Set To Purple")
-    123: pStr := string("Set To White")
-    124: pStr := string("Turn On AC")
-    125: pStr := string("Turn Off AC")
-    126: pStr := string("Increase Temperature")
-    127: pStr := string("Decrease Temperature")
-    128: pStr := string("Cool Mode")
-    129: pStr := string("Heat Mode")
-    130: pStr := string("Auto Mode")
-    131: pStr := string("Dry Mode")
-    132: pStr := string("Fan Mode")
-    133: pStr := string("Enable Blowing Up Down")
-    134: pStr := string("Disable Blowing Up Down")
-    135: pStr := string("Enable Blowing Right Left")
-    136: pStr := string("Disable Blowing Right Left")
-    137: pStr := string("Open The Window")
-    138: pStr := string("Close The Window")
-    139: pStr := string("Open Curtain")
-    140: pStr := string("Close Curtain")
-    141: pStr := string("Open The Door")
-    142: pStr := string("Close The Door")
-    200: pStr := string("Learning Wake Word")
-    201: pStr := string("Learning Command Word")
-    202: pStr := string("Re-Learn")
-    203: pStr := string("Exit Learning")
-    204: pStr := string("I Want To Delete")
-    205: pStr := string("Delete Wake Word")
-    206: pStr := string("Delete Command Word")
-    207: pStr := string("Exit Deleting")
-    208: pStr := string("Delete All")
-    other: pStr := string("(unknown)")
+    0..2:      pStr := @@nmTbl_0[cmdId]
+    5..21:     pStr := customWord(cmdId)
+    22..27:    pStr := @@nmTbl_22[cmdId - 22]
+    29..142:   pStr := @@nmTbl_29[cmdId - 29]
+    200..208:  pStr := @@nmTbl_200[cmdId - 200]
+
+
+DAT ' ---- Command-Word Phrase Table (dense indexed) ----
+
+' One dense WORD array per contiguous ID run; cmdName() range-checks cmdId and indexes the
+' matching array (base-offset subtracted). Entries are object-relative WORD offsets, resolved
+' at runtime with @@. No storage is spent on the ID-space gaps; IDs 5..21 route to customWord().
+
+nmTbl_0 ' IDs 0..2
+            word    @nm_none        ' 0
+            word    @nm_001         ' 1
+            word    @nm_002         ' 2
+
+nmTbl_22 ' IDs 22..27
+            word    @nm_022         ' 22
+            word    @nm_023         ' 23
+            word    @nm_024         ' 24
+            word    @nm_025         ' 25
+            word    @nm_026         ' 26
+            word    @nm_027         ' 27
+
+nmTbl_29 ' IDs 29..142
+            word    @nm_029         ' 29
+            word    @nm_030         ' 30
+            word    @nm_031         ' 31
+            word    @nm_032         ' 32
+            word    @nm_033         ' 33
+            word    @nm_034         ' 34
+            word    @nm_035         ' 35
+            word    @nm_036         ' 36
+            word    @nm_037         ' 37
+            word    @nm_038         ' 38
+            word    @nm_039         ' 39
+            word    @nm_040         ' 40
+            word    @nm_041         ' 41
+            word    @nm_042         ' 42
+            word    @nm_043         ' 43
+            word    @nm_044         ' 44
+            word    @nm_045         ' 45
+            word    @nm_046         ' 46
+            word    @nm_047         ' 47
+            word    @nm_048         ' 48
+            word    @nm_049         ' 49
+            word    @nm_050         ' 50
+            word    @nm_051         ' 51
+            word    @nm_052         ' 52
+            word    @nm_053         ' 53
+            word    @nm_054         ' 54
+            word    @nm_055         ' 55
+            word    @nm_056         ' 56
+            word    @nm_057         ' 57
+            word    @nm_058         ' 58
+            word    @nm_059         ' 59
+            word    @nm_060         ' 60
+            word    @nm_061         ' 61
+            word    @nm_062         ' 62
+            word    @nm_063         ' 63
+            word    @nm_064         ' 64
+            word    @nm_065         ' 65
+            word    @nm_066         ' 66
+            word    @nm_067         ' 67
+            word    @nm_068         ' 68
+            word    @nm_069         ' 69
+            word    @nm_070         ' 70
+            word    @nm_071         ' 71
+            word    @nm_072         ' 72
+            word    @nm_073         ' 73
+            word    @nm_074         ' 74
+            word    @nm_075         ' 75
+            word    @nm_076         ' 76
+            word    @nm_077         ' 77
+            word    @nm_078         ' 78
+            word    @nm_079         ' 79
+            word    @nm_080         ' 80
+            word    @nm_081         ' 81
+            word    @nm_082         ' 82
+            word    @nm_083         ' 83
+            word    @nm_084         ' 84
+            word    @nm_085         ' 85
+            word    @nm_086         ' 86
+            word    @nm_087         ' 87
+            word    @nm_088         ' 88
+            word    @nm_089         ' 89
+            word    @nm_090         ' 90
+            word    @nm_091         ' 91
+            word    @nm_092         ' 92
+            word    @nm_093         ' 93
+            word    @nm_094         ' 94
+            word    @nm_095         ' 95
+            word    @nm_096         ' 96
+            word    @nm_097         ' 97
+            word    @nm_098         ' 98
+            word    @nm_099         ' 99
+            word    @nm_100         ' 100
+            word    @nm_101         ' 101
+            word    @nm_102         ' 102
+            word    @nm_103         ' 103
+            word    @nm_104         ' 104
+            word    @nm_105         ' 105
+            word    @nm_106         ' 106
+            word    @nm_107         ' 107
+            word    @nm_108         ' 108
+            word    @nm_109         ' 109
+            word    @nm_110         ' 110
+            word    @nm_111         ' 111
+            word    @nm_112         ' 112
+            word    @nm_113         ' 113
+            word    @nm_114         ' 114
+            word    @nm_115         ' 115
+            word    @nm_116         ' 116
+            word    @nm_117         ' 117
+            word    @nm_118         ' 118
+            word    @nm_119         ' 119
+            word    @nm_120         ' 120
+            word    @nm_121         ' 121
+            word    @nm_122         ' 122
+            word    @nm_123         ' 123
+            word    @nm_124         ' 124
+            word    @nm_125         ' 125
+            word    @nm_126         ' 126
+            word    @nm_127         ' 127
+            word    @nm_128         ' 128
+            word    @nm_129         ' 129
+            word    @nm_130         ' 130
+            word    @nm_131         ' 131
+            word    @nm_132         ' 132
+            word    @nm_133         ' 133
+            word    @nm_134         ' 134
+            word    @nm_135         ' 135
+            word    @nm_136         ' 136
+            word    @nm_137         ' 137
+            word    @nm_138         ' 138
+            word    @nm_139         ' 139
+            word    @nm_140         ' 140
+            word    @nm_141         ' 141
+            word    @nm_142         ' 142
+
+nmTbl_200 ' IDs 200..208
+            word    @nm_200         ' 200
+            word    @nm_201         ' 201
+            word    @nm_202         ' 202
+            word    @nm_203         ' 203
+            word    @nm_204         ' 204
+            word    @nm_205         ' 205
+            word    @nm_206         ' 206
+            word    @nm_207         ' 207
+            word    @nm_208         ' 208
+
+' ---- phrase strings (deduped) ----
+nm_none        byte    "(none)", 0
+nm_custom      byte    "(custom)", 0
+nm_unknown     byte    "(unknown)", 0
+nm_001         byte    "Wake-up Words For Learning", 0
+nm_002         byte    "Hello Robot", 0
+nm_022         byte    "Go Forward", 0
+nm_023         byte    "Retreat", 0
+nm_024         byte    "Park A Car", 0
+nm_025         byte    "Turn Left 90 Degrees", 0
+nm_026         byte    "Turn Left 45 Degrees", 0
+nm_027         byte    "Turn Left 30 Degrees", 0
+nm_029         byte    "Turn Right 45 Degrees", 0
+nm_030         byte    "Turn Right 30 Degrees", 0
+nm_031         byte    "Shift Down A Gear", 0
+nm_032         byte    "Line Tracking Mode", 0
+nm_033         byte    "Light Tracking Mode", 0
+nm_034         byte    "Bluetooth Mode", 0
+nm_035         byte    "Obstacle Avoidance Mode", 0
+nm_036         byte    "Face Recognition", 0
+nm_037         byte    "Object Tracking", 0
+nm_038         byte    "Object Recognition", 0
+nm_039         byte    "Line Tracking", 0
+nm_040         byte    "Color Recognition", 0
+nm_041         byte    "Tag Recognition", 0
+nm_042         byte    "Object Sorting", 0
+nm_043         byte    "QR Code Recognition", 0
+nm_044         byte    "General Settings", 0
+nm_045         byte    "Clear Screen", 0
+nm_046         byte    "Learn Once", 0
+nm_047         byte    "Forget", 0
+nm_048         byte    "Load Model", 0
+nm_049         byte    "Save Model", 0
+nm_050         byte    "Take Photos And Save Them", 0
+nm_051         byte    "Save And Return", 0
+nm_052         byte    "Display Number Zero", 0
+nm_053         byte    "Display Number One", 0
+nm_054         byte    "Display Number Two", 0
+nm_055         byte    "Display Number Three", 0
+nm_056         byte    "Display Number Four", 0
+nm_057         byte    "Display Number Five", 0
+nm_058         byte    "Display Number Six", 0
+nm_059         byte    "Display Number Seven", 0
+nm_060         byte    "Display Number Eight", 0
+nm_061         byte    "Display Number Nine", 0
+nm_062         byte    "Display Smiley Face", 0
+nm_063         byte    "Display Crying Face", 0
+nm_064         byte    "Display Heart", 0
+nm_065         byte    "Turn Off Dot Matrix", 0
+nm_066         byte    "Read Current Posture", 0
+nm_067         byte    "Read Ambient Light", 0
+nm_068         byte    "Read Compass", 0
+nm_069         byte    "Read Temperature", 0
+nm_070         byte    "Read Acceleration", 0
+nm_071         byte    "Reading Sound Intensity", 0
+nm_072         byte    "Calibrate Electronic Gyroscope", 0
+nm_073         byte    "Turn On The Camera", 0
+nm_074         byte    "Turn Off The Camera", 0
+nm_075         byte    "Turn On The Fan", 0
+nm_076         byte    "Turn Off The Fan", 0
+nm_077         byte    "Turn Fan Speed To Gear One", 0
+nm_078         byte    "Turn Fan Speed To Gear Two", 0
+nm_079         byte    "Turn Fan Speed To Gear Three", 0
+nm_080         byte    "Start Oscillating", 0
+nm_081         byte    "Stop Oscillating", 0
+nm_082         byte    "Reset", 0
+nm_083         byte    "Set Servo To 10 Degrees", 0
+nm_084         byte    "Set Servo To 30 Degrees", 0
+nm_085         byte    "Set Servo To 45 Degrees", 0
+nm_086         byte    "Set Servo To 60 Degrees", 0
+nm_087         byte    "Set Servo To 90 Degrees", 0
+nm_088         byte    "Turn On The Buzzer", 0
+nm_089         byte    "Turn Off The Buzzer", 0
+nm_090         byte    "Turn On The Speaker", 0
+nm_091         byte    "Turn Off The Speaker", 0
+nm_092         byte    "Play Music", 0
+nm_093         byte    "Stop Playing", 0
+nm_094         byte    "The Last Track", 0
+nm_095         byte    "The Next Track", 0
+nm_096         byte    "Repeat This Track", 0
+nm_097         byte    "Volume Up", 0
+nm_098         byte    "Volume Down", 0
+nm_099         byte    "Change Volume To Maximum", 0
+nm_100         byte    "Change Volume To Minimum", 0
+nm_101         byte    "Change Volume To Medium", 0
+nm_102         byte    "Play Poem", 0
+nm_103         byte    "Turn On The Light", 0
+nm_104         byte    "Turn Off The Light", 0
+nm_105         byte    "Brighten The Light", 0
+nm_106         byte    "Dim The Light", 0
+nm_107         byte    "Adjust Brightness To Maximum", 0
+nm_108         byte    "Adjust Brightness To Minimum", 0
+nm_109         byte    "Increase Color Temperature", 0
+nm_110         byte    "Decrease Color Temperature", 0
+nm_111         byte    "Adjust Color Temperature To Maximum", 0
+nm_112         byte    "Adjust Color Temperature To Minimum", 0
+nm_113         byte    "Daylight Mode", 0
+nm_114         byte    "Moonlight Mode", 0
+nm_115         byte    "Color Mode", 0
+nm_116         byte    "Set To Red", 0
+nm_117         byte    "Set To Orange", 0
+nm_118         byte    "Set To Yellow", 0
+nm_119         byte    "Set To Green", 0
+nm_120         byte    "Set To Cyan", 0
+nm_121         byte    "Set To Blue", 0
+nm_122         byte    "Set To Purple", 0
+nm_123         byte    "Set To White", 0
+nm_124         byte    "Turn On AC", 0
+nm_125         byte    "Turn Off AC", 0
+nm_126         byte    "Increase Temperature", 0
+nm_127         byte    "Decrease Temperature", 0
+nm_128         byte    "Cool Mode", 0
+nm_129         byte    "Heat Mode", 0
+nm_130         byte    "Auto Mode", 0
+nm_131         byte    "Dry Mode", 0
+nm_132         byte    "Fan Mode", 0
+nm_133         byte    "Enable Blowing Up Down", 0
+nm_134         byte    "Disable Blowing Up Down", 0
+nm_135         byte    "Enable Blowing Right Left", 0
+nm_136         byte    "Disable Blowing Right Left", 0
+nm_137         byte    "Open The Window", 0
+nm_138         byte    "Close The Window", 0
+nm_139         byte    "Open Curtain", 0
+nm_140         byte    "Close Curtain", 0
+nm_141         byte    "Open The Door", 0
+nm_142         byte    "Close The Door", 0
+nm_200         byte    "Learning Wake Word", 0
+nm_201         byte    "Learning Command Word", 0
+nm_202         byte    "Re-Learn", 0
+nm_203         byte    "Exit Learning", 0
+nm_204         byte    "I Want To Delete", 0
+nm_205         byte    "Delete Wake Word", 0
+nm_206         byte    "Delete Command Word", 0
+nm_207         byte    "Exit Deleting", 0
+nm_208         byte    "Delete All", 0
+
+' <<< END GENERATED cmd-name table
+
+
+PRI customWord(cmdId) : pStr
+' Registered custom phrase for a custom slot (CUSTOM_FIRST..CUSTOM_LAST), or "(custom)" if none.
+'
+' @param cmdId - custom command-word ID (assumed already range-checked by the cmdName dispatcher)
+' @returns pStr - registered phrase pointer, or @nm_custom if the slot is unregistered
+
+  pStr := @nm_custom
+  if customPtr[cmdId - CUSTOM_FIRST]
+    pStr := customPtr[cmdId - CUSTOM_FIRST]
+
+
+PRI boundedLen(pStr, maxLen) : nLen | idx
+' Return the string length if a 0 terminator is found within maxLen bytes, else -1.
+'
+' @param pStr - pointer to the candidate string
+' @param maxLen - maximum bytes to scan for the terminator
+' @returns nLen - length (offset of the 0) if terminated within maxLen, else -1
+
+' Local Variables:
+' @local idx - scan offset
+
+  nLen := -1
+  repeat idx from 0 to maxLen - 1
+    if byte[pStr][idx] == 0
+      nLen := idx
+      quit
+
+
+CON ' ---- License ----
+
+{{
+ -------------------------------------------------------------------------------------------------
+  MIT License
+
+  Copyright (c) 2026 Iron Sheep Productions, LLC
+
+  Permission is hereby granted, free of charge, to any person obtaining a copy
+  of this software and associated documentation files (the "Software"), to deal
+  in the Software without restriction, including without limitation the rights
+  to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+  copies of the Software, and to permit persons to whom the Software is
+  furnished to do so, subject to the following conditions:
+
+  The above copyright notice and this permission notice shall be included in all
+  copies or substantial portions of the Software.
+
+  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+  IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+  AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+  LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+  SOFTWARE.
+ =================================================================================================
+}}

@@ -183,9 +183,19 @@ Applications **react by ID** via `voice.<NAME>` — e.g. `case id: voice.CMD_RET
 cost nothing unless referenced.
 
 For the **human-readable phrase**, include the optional object `isp_voice_command_names` and call
-`names.cmdName(cmdId) : pStr` (returns e.g. `"Retreat"`; `"(custom)"` for 5–21, `"(unknown)"`
-otherwise). It is a *separate* object so its string table is compiled in **only when included** —
-react-by-ID apps don't pay for it.
+`names.cmdName(cmdId) : pStr` (returns e.g. `"Retreat"`; `"(custom)"` for an unregistered custom
+slot 5–21, `"(unknown)"` otherwise). It is a *separate* object so its string table is compiled in
+**only when included** — react-by-ID apps don't pay for it. Internally it is a dense indexed table
+(generated from `tools/cmdname_catalog.tsv`), not a runtime `case`.
+
+**Custom-word registration.** The device trains custom words by voice and reports only their slot ID
+(5–21); it stores no text, so the *application* owns the meaning. `isp_voice_command_names` therefore
+exposes `registerCustomTable(pTable) : status` — the app declares an **inline table** (per entry: one
+index byte then a zero-terminated phrase; a `0` byte ends it) and registers it once; the call
+validates the whole table (index range, terminator within `CUSTOM_MAXLEN`, duplicates, count) and
+returns `REG_OK` or a `REG_E_*` reason, registering nothing on reject. `cmdName()` then returns the
+registered phrase for those IDs; `clearCustomWords()` forgets them. See `DOCs/USER-GUIDE.md` for the
+copy-paste table exemplar.
 
 IDs and phrases are ported from `DFRobot_DF2301Q_Commands.py`. **Validate against the product's
 printed command-word card on hardware** (#9) — firmware revisions have reshuffled lists. Full table
@@ -261,3 +271,5 @@ on-hardware work above.
 - `DOCs/reference/THEORY-OF-OPERATIONS.md` — DF2301Q device protocol and reference library
   (register map, command-word table, findings F1–F7).
 - `DOCs/plans/VOICE-RECOGNIZER-DRIVER-SPRINT-PLAN.md` — the build that produced 0.1.0.
+- `DOCs/USER-GUIDE.md` — task-oriented library manual (humans + AI agents); how to use every facility.
+- `DOCs/COMMAND-CATALOG.md` — full built-in command-word list (generated from `tools/cmdname_catalog.tsv`).

@@ -221,6 +221,8 @@ __marimo__/
 REF/
 .DS_Store
 docker-compose.override.yml
+.mcp.json
+.claude/settings.local.json
 .history/
 *.zip
 *.gz
@@ -228,4 +230,5 @@ docker-compose.override.yml
 src/tests/recordings/catalog.json
 src/pnut-term-settings.json
 *.bin
+src/*.txt
 /DOCs/REF-NO-COMMIT

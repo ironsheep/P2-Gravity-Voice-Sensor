@@ -139,6 +139,19 @@ VAR
   long  mx, my, mwheel, mlb, mmb, mrb, mpix
 
 
+DAT ' ---- demo custom-word vocabulary ----
+
+' Exemplar inline custom-word table (the shape documented in DOCs/USER-GUIDE.md). Each entry is one
+' index byte (a custom slot, CMD_CUSTOM_1..CMD_CUSTOM_17 = 5..21) followed by a zero-terminated
+' phrase; a single 0 byte ends the table. On a real build these are the phrases the user trained on
+' the module by voice for those slots. registerCustomTable() validates and registers this once.
+demoCustomWords
+            byte    5, "open the garage door", 0
+            byte    6, "turn on the shop lights", 0
+            byte    7, "good night", 0
+            byte    0
+
+
 PUB main() | cmdId, prevLb, lastMx, lastMy, lastLb
 '' Build the panel, init the sensor, then run the click-driven control loop.
 ''
@@ -246,6 +259,10 @@ PRI setup()
     debug("DF2301Q not found - check wiring (SCL=18 SDA=16)")
     waitms(2000)
   debug("DF2301Q ready: ", zstr_(voice.version()))
+
+  ' Register this demo's custom-word vocabulary (the phrases a user would train on the module by voice
+  ' for slots 5..21). cmdName() then returns these for IDs 5..21, so the HEARD/BROWSE lines show words.
+  debug("registerCustomTable -> ", sdec_(names.registerCustomTable(@demoCustomWords)))
 
 
 PRI readActive() : cmdId
