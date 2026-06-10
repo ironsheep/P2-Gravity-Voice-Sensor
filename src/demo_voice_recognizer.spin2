@@ -152,12 +152,13 @@ demoCustomWords
             byte    0
 
 
-PUB main() | cmdId, prevLb, lastMx, lastMy, lastLb
+PUB main() | cmdId, pPhrase, prevLb, lastMx, lastMy, lastLb
 '' Build the panel, init the sensor, then run the click-driven control loop.
 ''
 
 ' Local Variables:
 ' @local cmdId - latest recognized command-word ID this poll (0 = none)
+' @local pPhrase - cmdName(cmdId) result for the heard ID (HEARD line + unmapped check)
 ' @local prevLb - left-button state from the previous poll (press-edge detect)
 ' @local lastMx - last reported mouse x (change detection)
 ' @local lastMy - last reported mouse y (change detection)
@@ -184,17 +185,26 @@ PUB main() | cmdId, prevLb, lastMx, lastMy, lastLb
   redrawTerm()                                                 ' paint the HEARD/TARGET/SPOKEN readout
   debug(`vp update)
 
+  ' Boot straight into the self-poller cog so the demo continuously polls and shows every heard word
+  ' on the HEARD line (via cmdName) with no operator action.  Done AFTER the foreground config calls
+  ' above so they finish before the poller cog takes the bus.  Volume/Wake/Mute buttons auto-drop to
+  ' IDLE first (busAction), so they still work.
+  setMode(MODE_POLL)
+
   prevLb := 0
   lastMx := lastMy := lastLb := $7FFF_FFFF                     ' force the first MOUSE report
   repeat
     cmdId := readActive()                                      ' poll the sensor per current mode
     if cmdId
+      pPhrase := names.cmdName(cmdId)                           ' ID -> phrase (one lookup, reused below)
       showCmd(cmdId)                                           ' numeric ID in the readout box
       lastHeardId := cmdId                                     ' id + words + "done" go to the TERM HEARD line
-      lastHeard := names.cmdName(cmdId)
+      lastHeard := pPhrase
       doneStr := string("done")
       redrawTerm()
-      debug("CMDID ", udec_(cmdId), " = ", zstr_(names.cmdName(cmdId)), "  done")   ' recognition to the log
+      debug("CMDID ", udec_(cmdId), " = ", zstr_(pPhrase), "  done")   ' recognition to the log
+      if byte[pPhrase] == "("                                  ' placeholder ("(unknown)"/"(custom)"), not a real word
+        reportUnmapped(cmdId)                                  ' flag it so we can add it to the display table
 
     debug(`vp `pc_mouse(@mx))                                  ' poll mouse (MUST be last in stmt)
 
@@ -276,6 +286,19 @@ PRI readActive() : cmdId
     MODE_SCAN: cmdId := voice.pollCMDID()                      ' passive scanner poll
     MODE_POLL: cmdId := voice.getLatest()                      ' self-poller cog mailbox
     other:     cmdId := 0                                      ' idle / stopped
+
+
+PRI reportUnmapped(cmdId)
+' Log a heard CMDID whose cmdName() is only a placeholder ("(unknown)"/"(custom)"), so the spoken
+' word can be identified and added to the display table.  Built-ins and custom slots go to different
+' places, so point at the right one.
+'
+' @param cmdId - the recognized command-word ID that has no real phrase yet
+
+  if (cmdId >= names.CUSTOM_FIRST) and (cmdId <= names.CUSTOM_LAST)
+    debug("** UNMAPPED custom CMDID=", udec_(cmdId), " -- add this slot to demoCustomWords + registerCustomTable **")
+  else
+    debug("** UNMAPPED built-in CMDID=", udec_(cmdId), " -- add it to tools/cmdname_catalog.tsv and regenerate the table **")
 
 
 PRI handleClick(x, y)
@@ -394,10 +417,13 @@ PRI busAction()
     setMode(MODE_IDLE)
 
 
-PRI setMode(newMode)
+PRI setMode(newMode) | pollerStatus
 ' Switch usage profile, starting/stopping the poller cog as needed, and clear the readout.
 '
 ' @param newMode - usage profile to switch to (MODE_*)
+
+' Local Variables:
+' @local pollerStatus - startPoller() result when entering MODE_POLL (E_OK or a reason code)
 
   if (mode == MODE_POLL) and (newMode <> MODE_POLL)
     voice.stopPoller()
@@ -405,7 +431,9 @@ PRI setMode(newMode)
   mode := newMode
   paintModeBtn(mode, true)                                     ' highlight the new active mode button
   if newMode == MODE_POLL
-    voice.startPoller()
+    pollerStatus := voice.startPoller()                        ' status code now (E_ALREADY / E_NO_COG on failure)
+    if pollerStatus <> voice.E_OK
+      debug("** startPoller FAILED status=", sdec_(pollerStatus), " -- poll mode will read nothing **")
   clearCmd()
 
 
