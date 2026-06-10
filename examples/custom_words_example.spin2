@@ -1,0 +1,86 @@
+{Spin2_v46}
+'' =================================================================================================
+''
+''   File....... custom_words_example.spin2
+''   Purpose.... Minimal worked example: bring up the voice sensor, register an application's
+''               custom-word vocabulary, and react to recognitions by their human phrase.
+''               This is the "example voice table" shipped in the integration kit.
+''   Author..... Stephen M Moraco
+''               Copyright (c) 2026 Iron Sheep Productions, LLC
+''               -- see end of file for terms of use
+''   E-mail..... stephen@ironsheep.biz
+''
+''   Needs...... isp_voice_recognizer + isp_i2c_singleton  (the minimal 2-file set)
+''               isp_voice_command_names                   (ID -> phrase + custom-word registration)
+''   See........ DOCs/USER-GUIDE.md  (§0 minimal integration, §6 custom words)
+''
+'' =================================================================================================
+
+
+OBJ
+
+  voice : "isp_voice_recognizer"      ' the driver
+  i2c   : "isp_i2c_singleton"         ' referenced only for the PU_* pull-up selectors
+  names : "isp_voice_command_names"   ' optional ID -> phrase lookup + custom-word registration
+
+
+CON
+
+  SCL_PIN = 18
+  SDA_PIN = 16
+  BUS_KHZ = 100                       ' 100 (standard) / 400 / 1000
+
+
+DAT ' ---- this application's custom voice words (trained on the module, slots 5..21) ----
+
+myCustomWords
+            byte    voice.CMD_CUSTOM_1, "open the garage door", 0    ' slot 5
+            byte    voice.CMD_CUSTOM_2, "turn on the shop lights", 0 ' slot 6
+            byte    voice.CMD_CUSTOM_3, "good night", 0             ' slot 7
+            byte    0                                                ' end of table
+
+
+PUB main() | id, status
+
+  ' 1. Bring up the bus and confirm the sensor answers.
+  if not voice.start(SCL_PIN, SDA_PIN, BUS_KHZ, i2c.PU_1K5)
+      debug("DF2301Q not found - check wiring/address/pull-up")
+      return
+
+  ' 2. Tell the names object what our custom slots mean (one-time, all-or-nothing).
+  status := names.registerCustomTable(@myCustomWords)
+  if status <> names.REG_OK
+      debug("custom table rejected: ", sdec_(status))
+      return
+
+  voice.setWakeTime(15)               ' seconds awake after the wake word
+
+  ' 3. Poll and react.  cmdName() now returns our custom phrases for slots 5..7,
+  '    and the built-in phrase for any other recognized ID.
+  repeat
+      id := voice.getCMDID()
+      if id <> 0
+          debug("heard: ", zstr_(names.cmdName(id)))
+      waitms(50)
+
+
+CON { license }
+
+{{
+ -------------------------------------------------------------------------------------------------
+  MIT License
+
+  Copyright (c) 2026 Iron Sheep Productions, LLC
+
+  Permission is hereby granted, free of charge, to any person obtaining a copy of this software
+  and associated documentation files (the "Software"), to deal in the Software without restriction,
+  including without limitation the rights to use, copy, modify, merge, publish, distribute,
+  sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is
+  furnished to do so, subject to the following conditions:
+
+  The above copyright notice and this permission notice shall be included in all copies or
+  substantial portions of the Software.
+
+  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED.
+ -------------------------------------------------------------------------------------------------
+}}

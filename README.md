@@ -13,46 +13,45 @@ and talks to a host over either **I2C** or **UART**.
 
 This repository is a **port** of DFRobot's
 [reference Arduino/C++ and Python library](https://github.com/DFRobot/DFRobot_DF2301Q) to
-the P2. The aim is an idiomatic Spin2 object that a P2 application can drop in to listen
-for spoken commands and react to them.
+the P2 — an idiomatic Spin2 object that a P2 application drops in to listen for spoken
+commands and react to them.
 
 ## Status
 
-**Early / greenfield.** No driver source exists yet — `src/` is empty and the work is
-in progress. DFRobot's upstream library is the protocol specification we are porting from;
-this README describes the intended driver.
+**Shipping — v1.0.0.** The I2C driver is implemented and compiles clean under `pnut-ts`.
+See [`CHANGELOG.md`](CHANGELOG.md) for what's in each release and the
+[Releases page](https://github.com/ironsheep/P2-Gravity-Voice-Sensor/releases) for
+downloadable bundles. To start using it, read [`DOCs/USER-GUIDE.md`](DOCs/USER-GUIDE.md)
+(§0 is the minimal drop-in).
 
-## What the driver will do
+> **Transport scope:** the DF2301Q sensor speaks both **I2C** and **UART**; this driver
+> implements the **I2C** transport. UART is not implemented.
+
+## What the driver does
 
 The core loop is simple: the sensor recognizes a phrase and hands the host a command ID;
 the host decides what to do with it.
 
 - **Listen for commands** — poll for the most recently recognized command word and read
-  back its ID (`0` means "nothing recognized"). On UART the module pushes a framed packet
-  per recognition; on I2C the host polls a register.
+  back its ID over I2C (`0` means "nothing recognized"; ~50 ms read spacing is enforced).
 - **Speak replies** — trigger the module to play its built-in reply audio for a given
-  command ID (and, in I2C mode, enter the wake state).
-- **Configure the module** — set playback volume, mute/unmute, and the wake-state
-  duration; on UART also reset the module outright.
+  command ID, and enter the wake state.
+- **Configure the module** — set playback volume, mute/unmute, and the wake-state duration.
 
-Two transports are supported, mirroring the reference library's split into separate I2C
-and UART objects:
-
-| | I2C | UART |
-|---|---|---|
-| Wiring | 7-bit address `0x64` | 9600 baud, 8N1 |
-| Recognition | host polls the command-ID register (~50 ms spacing) | module pushes a checksummed packet; host parses a byte-stream state machine |
-| Plug-and-play | Gravity I2C connector | Gravity UART connector |
-
-Both are 3.3 V / 5 V tolerant via the standard Gravity interface.
+Every bus method is **non-blocking**, so the driver can be polled from a shared device-scanner
+cog without stalling it. Three usage profiles (scanner-poll, self-poller cog, synchronous) are
+documented in the user's guide.
 
 ### Command words
 
-Each recognizable phrase maps to a fixed numeric ID. The module includes **150 built-in
+Each recognizable phrase maps to a fixed numeric ID. The module includes **~150 built-in
 command words** (movement, display, media, lighting, climate, and more) plus a **wake
-word**, and reserves slots for **custom commands**. The full command-word ID table
-(published in DFRobot's library) will be ported to Spin2 `CON` symbols so application
-code can reference commands by name instead of magic numbers.
+word**, and reserves **17 slots (IDs 5–21)** for user-trained custom commands. The full
+command-word ID table is ported to Spin2 `CON` symbols (`voice.CMD_*`) so application code
+references commands by name instead of magic numbers — see
+[`DOCs/COMMAND-CATALOG.md`](DOCs/COMMAND-CATALOG.md). The optional `isp_voice_command_names`
+object maps an ID back to its human phrase and lets your app register the text for its custom
+slots.
 
 A few IDs are special and relevant to training (below): `1` = wake-words-for-learning,
 `46` = learn once, `47` = forget, `48`/`49` = load/save model, and `200`–`208` =
@@ -89,9 +88,12 @@ working on hardware.
 
 | Path | Contents |
 |---|---|
-| `src/` | P2 Spin2/PASM2 driver (to be written) |
-| `DOCs/` | Project documentation, including `DOCs/policy/SPIN2-AUTHORING-GUIDE.md` (Spin2 coding standards) |
-| `.devcontainer/` | Dev container; installs the `pnut-ts` P2 compiler |
+| `src/` | the P2 Spin2/PASM2 driver: `isp_voice_recognizer` (driver), `isp_voice_command_names` (optional phrases), `isp_i2c_singleton` (shared bus), and `demo_voice_recognizer` (DEBUG-panel demo) |
+| `examples/` | worked examples (e.g. `custom_words_example.spin2`) |
+| `DOCs/` | documentation: `USER-GUIDE.md`, `COMMAND-CATALOG.md`, spec/design/reference, and `policy/` (authoring guide, changelog style, release process) |
+| `tools/` | the command-catalog/table generator and `build-check.sh` (the local release gate) |
+| `.github/workflows/` | the tag-triggered release-packaging workflow |
+| `.devcontainer/` | dev container; installs the `pnut-ts` P2 compiler |
 
 ## Building
 

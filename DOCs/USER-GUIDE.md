@@ -15,6 +15,33 @@ a signature, a one-line contract, and a runnable snippet.
 
 ---
 
+## 0. Minimal integration — the least you must add
+
+**The question this section answers:** *what is the smallest set of files I drop into an existing
+P2 system to make it respond to spoken commands?* Pick a tier and copy exactly those files.
+
+| Tier | Add these files | You get |
+|------|-----------------|---------|
+| **Minimal** (react by ID) | `isp_voice_recognizer.spin2` **+** `isp_i2c_singleton.spin2` | poll `getCMDID()`, `case` on `voice.CMD_*` |
+| **+ Phrases / custom words** | also `isp_voice_command_names.spin2` | `cmdName(id)` → text; register custom slots 5–21 |
+| **+ Visual demo** | also `demo_voice_recognizer.spin2` + `panel_bg/font/hi.bmp` | the DEBUG-panel reference app |
+
+**Recipe (minimal tier):**
+1. Copy the two `.spin2` files next to your top-level object (pnut-ts resolves `OBJ` relative to
+   the *including* file's directory).
+2. Add the `OBJ` lines and call `start()` once, then poll — see [§2 Quick start](#2-quick-start).
+
+**Shared-bus caveat:** `isp_i2c_singleton` is a *shared* I2C bus object. If your system already
+includes it for another device, **reuse that instance** — do not add a second copy; the singleton
+is meant to back every I2C device on the bus. You include it here only to bring up the bus and to
+name the `i2c.PU_*` pull-up selectors.
+
+> The integration-kit release zip (`Voice-Sensor-<version>.zip`) ships these files **flat**, plus
+> this guide, the command catalog, and a worked `custom_words_example.spin2` — so it compiles in
+> PNut as unpacked. The `demo` zip is the superset with the demo app and artwork.
+
+---
+
 ## 1. What you get
 
 A self-contained, **offline** speech-recognition peripheral exposed as a P2 object. The module
@@ -103,7 +130,7 @@ means "nothing recognized," which is a value, not an error). *Presence* queries 
 
 | Method | Returns | Purpose |
 |--------|---------|---------|
-| `version()` | `pStr` | pointer to the version string (`"0.2.0"`) |
+| `version()` | `pStr` | pointer to the version string (`"1.0.0"`) |
 | `start(scl, sda, khz, pullup)` | `bFound` | init the bus on the pins, probe `$64`; seeds the volume shadow. `TRUE` if present. Call once first. |
 | `getCMDID()` | `cmdId` | latest recognized ID, `0` = none (simple-profile alias of `pollCMDID`) |
 | `pollCMDID()` | `cmdId` | latest recognized ID, `0` = none; non-blocking, >=50 ms read spacing enforced |

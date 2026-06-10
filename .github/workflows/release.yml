@@ -1,0 +1,126 @@
+name: Release
+
+# Fires when a version tag is pushed.  The LOCAL build gate (compile every source file with
+# pnut-ts) is the human's responsibility BEFORE tagging -- we cannot compile remotely, so this
+# workflow never builds Spin2.  It only (1) enforces the three-way version lock and (2) assembles
+# and publishes the downloadable bundles from fixed file manifests.
+#
+#   Release procedure:
+#     1. Locally: compile every source file green  (tools/build-check.sh)
+#     2. Add the new version section to the top of CHANGELOG.md
+#     3. Ensure DRIVER_VERSION in src/isp_voice_recognizer.spin2 matches
+#     4. git commit, then  git tag vX.Y.Z  &&  git push --tags
+#
+# GitHub additionally attaches "Source code (zip/tar.gz)" of the tag automatically -- that is the
+# third asset (the complete repo, tests included), so we do not build a tests bundle here.
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write   # needed to create the Release and upload assets
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (full history for the tag)
+        uses: actions/checkout@v4
+
+      - name: Resolve versions (tag / CHANGELOG / driver)
+        id: ver
+        run: |
+          set -euo pipefail
+
+          TAG_VER="${GITHUB_REF_NAME#v}"
+
+          # Top-most "## vX.Y.Z (date)" entry in the changelog is the version of record.
+          CHANGELOG_VER="$(grep -m1 -oE '^## v[0-9]+\.[0-9]+\.[0-9]+' CHANGELOG.md \
+                            | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')"
+
+          # Driver's internal version string.
+          DRIVER_VER="$(grep -m1 -E '^DRIVER_VERSION' src/isp_voice_recognizer.spin2 \
+                         | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')"
+
+          echo "tag=$TAG_VER"             >> "$GITHUB_OUTPUT"
+          echo "changelog=$CHANGELOG_VER" >> "$GITHUB_OUTPUT"
+          echo "driver=$DRIVER_VER"       >> "$GITHUB_OUTPUT"
+
+          echo "tag=$TAG_VER  changelog=$CHANGELOG_VER  driver=$DRIVER_VER"
+
+      - name: Enforce three-way version lock
+        run: |
+          set -euo pipefail
+          T='${{ steps.ver.outputs.tag }}'
+          C='${{ steps.ver.outputs.changelog }}'
+          D='${{ steps.ver.outputs.driver }}'
+          if [ -z "$T" ] || [ -z "$C" ] || [ -z "$D" ]; then
+            echo "::error::Could not resolve one of: tag='$T' changelog='$C' driver='$D'"; exit 1
+          fi
+          if [ "$T" != "$C" ] || [ "$T" != "$D" ]; then
+            echo "::error::Version drift -- tag=$T changelog=$C driver=$D must all match"; exit 1
+          fi
+          echo "Version lock OK: $T"
+
+      - name: Extract this version's release notes
+        run: |
+          set -euo pipefail
+          VER='${{ steps.ver.outputs.changelog }}'
+          # Print lines after "## vVER (date)" up to (but not including) the next "## v" heading.
+          awk -v ver="$VER" '
+            $0 ~ "^## v" ver "( |$)" {grab=1; next}
+            grab && /^## v/ {exit}
+            grab {print}
+          ' CHANGELOG.md > RELEASE_NOTES.md
+          echo "---- release notes ----"; cat RELEASE_NOTES.md
+
+      - name: Assemble bundles
+        run: |
+          set -euo pipefail
+          VER='${{ steps.ver.outputs.changelog }}'
+          mkdir -p dist
+
+          # ---- Asset A: integration kit (flat -- compiles as-is in PNut) ----
+          KIT="Voice-Sensor-$VER"
+          mkdir -p "stage/$KIT"
+          cp src/isp_voice_recognizer.spin2      "stage/$KIT/"
+          cp src/isp_i2c_singleton.spin2         "stage/$KIT/"
+          cp src/isp_voice_command_names.spin2   "stage/$KIT/"
+          cp examples/custom_words_example.spin2 "stage/$KIT/"
+          cp DOCs/USER-GUIDE.md                  "stage/$KIT/"
+          cp DOCs/COMMAND-CATALOG.md             "stage/$KIT/"
+          cp CHANGELOG.md                        "stage/$KIT/"
+          cp LICENSE                             "stage/$KIT/"
+          ( cd stage && zip -r "../dist/$KIT.zip" "$KIT" )
+
+          # ---- Asset B: demo bundle (superset of A: + demo, artwork, docs, tools) ----
+          DEMO="Voice-Sensor-demo-$VER"
+          mkdir -p "stage/$DEMO" "stage/$DEMO/DOCs" "stage/$DEMO/tools"
+          # code + artwork live flat at root so the demo compiles in place
+          cp src/isp_voice_recognizer.spin2      "stage/$DEMO/"
+          cp src/isp_i2c_singleton.spin2         "stage/$DEMO/"
+          cp src/isp_voice_command_names.spin2   "stage/$DEMO/"
+          cp examples/custom_words_example.spin2 "stage/$DEMO/"
+          cp src/demo_voice_recognizer.spin2     "stage/$DEMO/"
+          cp src/panel_bg.bmp src/panel_font.bmp src/panel_hi.bmp "stage/$DEMO/"
+          cp README.md CHANGELOG.md LICENSE      "stage/$DEMO/"
+          cp DOCs/USER-GUIDE.md DOCs/COMMAND-CATALOG.md "stage/$DEMO/DOCs/"
+          cp DOCs/spec/P2-Gravity-Voice-Sensor-Specification.md "stage/$DEMO/DOCs/"
+          cp DOCs/design/DRIVER-THEORY-OF-OPERATIONS.md         "stage/$DEMO/DOCs/"
+          cp DOCs/reference/THEORY-OF-OPERATIONS.md             "stage/$DEMO/DOCs/"
+          cp tools/gen_cmdname_table.py tools/cmdname_catalog.tsv tools/gen_panel_assets.py "stage/$DEMO/tools/"
+          ( cd stage && zip -r "../dist/$DEMO.zip" "$DEMO" )
+
+          ls -l dist
+
+      - name: Create GitHub Release and upload assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release create "$GITHUB_REF_NAME" \
+            --title "$GITHUB_REF_NAME" \
+            --notes-file RELEASE_NOTES.md \
+            dist/*.zip

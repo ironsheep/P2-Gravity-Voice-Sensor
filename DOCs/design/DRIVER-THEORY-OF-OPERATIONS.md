@@ -9,7 +9,7 @@ discipline, and the I²C layer it rests on. It is distinct from
 device protocol* we ported from. Read the reference doc for what the chip does on the wire; read
 this one for how our object is built.
 
-> **Status: living design doc.** Build 0.2.0 is implemented: `src/isp_voice_recognizer.spin2`
+> **Status: living design doc.** Build 1.0.0 is implemented: `src/isp_voice_recognizer.spin2`
 > (driver), `src/demo_voice_recognizer.spin2` (demo/top), on `src/isp_i2c_singleton.spin2` (bus) —
 > all compile clean under `pnut-ts -d`. Sections marked *(implemented)* are code; *(planned)* are
 > not yet built (the `test_` harness). On-hardware behavior + the F1/F2 values land in task §9.
@@ -106,7 +106,7 @@ The full contract (parameters, returns, blocking, edge semantics) is in
 
 | Method | Blocks? | Notes |
 |---|---|---|
-| `version() : pStr` | no | pointer to the version string (`"0.2.0"`) |
+| `version() : pStr` | no | pointer to the version string (`"1.0.0"`) |
 | `start(scl, sda, khz, pullup) : bFound` | no | init bus (via I²C singleton), probe 0x64, return present/absent |
 | `pollCMDID() : cmdId` | no | scanner entry point: one read or cached, 50 ms spacing by time-check |
 | `getCMDID() : cmdId` | no | alias/simple form for synchronous use |

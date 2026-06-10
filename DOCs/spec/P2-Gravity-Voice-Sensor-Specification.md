@@ -1,8 +1,8 @@
 # P2 Gravity Voice Sensor — Specification
 
 **Object:** `isp_voice_recognizer.spin2` — P2 (Spin2) driver for the DFRobot DF2301Q
-"Gravity: Offline Voice Recognition Sensor" (SKU SEN0539) over **I²C**. Build **0.2.0**
-(authoring-guide conformance + first-consumer handoff cleanup; public API unchanged from 0.1.0).
+"Gravity: Offline Voice Recognition Sensor" (SKU SEN0539) over **I²C**. Build **1.0.0**
+(first public release; authoring-guide conformance + first-consumer handoff cleanup).
 
 This is the authoritative API/behavior specification. For *how it works internally* see
 `DOCs/design/DRIVER-THEORY-OF-OPERATIONS.md`; for the *device protocol* it ports see
@@ -57,7 +57,7 @@ boolean-by-nature and return TRUE/FALSE.
 
 | Method | Returns | Blocks? | Behavior |
 |--------|---------|---------|----------|
-| `version()` | `pStr` | no | Pointer to the zero-terminated version string (`"0.2.0"`). |
+| `version()` | `pStr` | no | Pointer to the zero-terminated version string (`"1.0.0"`). |
 | `start(scl, sda, khz, pullup)` | `bFound` | no¹ | Init the I²C bus on the given pins (`khz` = 100/400/1000; `pullup` = `i2c.PU_NONE/PU_1K5/PU_3K3/PU_15K`), probe address `$64`. On success, applies `DEF_VOLUME` so the volume shadow is seeded. Returns TRUE if the device ACKs, FALSE if absent. Call once before any other method. |
 | `getCMDID()` | `cmdId` | no | Simple-profile alias of `pollCMDID()`. |
 | `pollCMDID()` | `cmdId` | no | Latest recognized command ID; **0 = none**. Enforces ≥50 ms between actual bus reads via a tick check — if polled sooner, returns the cached value without touching the bus. The chip latch-clears on read. |
@@ -249,14 +249,14 @@ on-hardware work above.
 
 ## 11. Deliverables
 
-1. `src/isp_voice_recognizer.spin2` — the driver (`version()` → `"0.2.0"`).
+1. `src/isp_voice_recognizer.spin2` — the driver (`version()` → `"1.0.0"`).
 2. `src/isp_voice_command_names.spin2` — optional ID→phrase catalog.
 3. `src/demo_voice_recognizer.spin2` (+ `tools/gen_panel_assets.py` + `panel_*.bmp`) — the DEBUG
    PLOT front-panel demo.
 4. `src/test_voice_recognizer.spin2` — the regression top (§9). *(TODO)*
 5. This specification + `DOCs/design/DRIVER-THEORY-OF-OPERATIONS.md` + `DOCs/PUNCH-LIST.md`.
 
-## 12. Acceptance (v0.1.0 functional scope; current build 0.2.0)
+## 12. Acceptance (v0.1.0 functional scope; current build 1.0.0)
 
 - Driver compiles clean under pnut-ts (container).
 - Every I²C capability has a public representative (§3.1); raw register access stays private.
